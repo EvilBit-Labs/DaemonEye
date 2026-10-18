@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use daemoneye_lib::alerting::config::{CredentialResolver, SinkSpec};
+use daemoneye_lib::alerting::config::{CredentialResolver, Credentials, SinkSpec};
 use daemoneye_lib::config::{AlertSinkConfig, AlertingConfig, Config, ConfigLoader};
 use figment::Jail;
 use serde_json::{Value, json};
@@ -103,6 +103,22 @@ fn delivery_range_is_enforced_naming_field_and_range() {
     config.alerting.delivery.max_backoff_secs = 60;
     config.alerting.delivery.max_open_rows_per_sink = 0;
     assert!(failure(&config).contains("max_open_rows_per_sink"));
+}
+
+/// Both fields in range but inverted: the base would be silently capped, so the pair is refused.
+#[test]
+fn initial_backoff_may_not_exceed_the_backoff_ceiling() {
+    let mut config = Config::default();
+    config.alerting.delivery.initial_backoff_ms = 10_000;
+    config.alerting.delivery.max_backoff_secs = 1;
+    let msg = failure(&config);
+    assert!(
+        msg.contains("initial_backoff_ms") && msg.contains("max_backoff_secs"),
+        "{msg}"
+    );
+
+    config.alerting.delivery.max_backoff_secs = 10;
+    assert!(config.validate().is_ok(), "equal is allowed");
 }
 
 #[test]
@@ -370,5 +386,7 @@ fn basic_auth_resolves_both_halves() {
         .to_string();
     assert!(msg.contains('P'), "{msg}");
     let both = CredentialResolver::new(|_name: &str| Some("v".to_owned()));
-    assert!(format!("{:?}", both.resolve(&spec).unwrap()).contains("[REDACTED]"));
+    let resolved = both.resolve(&spec).unwrap();
+    assert!(matches!(resolved.credentials, Credentials::Basic { .. }));
+    assert!(format!("{resolved:?}").contains("[REDACTED]"));
 }

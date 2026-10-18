@@ -7,6 +7,7 @@
 
 use crate::alerting::OutputFormat;
 use crate::config::{AlertSinkConfig, AlertingConfig, ConfigError, ConfigLoader, check_range};
+use crate::storage::DELIVERY_KEY_SEP;
 use secrecy::SecretString;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -14,7 +15,6 @@ use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
 const KNOWN_SINK_TYPES: [&str; 5] = ["stdout", "file", "webhook", "syslog", "email"];
-const NAME_SEPARATOR: char = '\u{1f}';
 const PEM_CERTIFICATE_MARKER: &[u8] = b"-----BEGIN CERTIFICATE-----";
 const REDACTED: &str = "[REDACTED]";
 
@@ -135,13 +135,14 @@ pub struct WebhookSpec {
     /// Header carrying the token when `auth = "header"`.
     #[serde(default)]
     pub header_name: Option<String>,
-    /// Per-request timeout, 1..=120 seconds.
+    /// Per-request timeout, 1..=120 seconds; the smaller of this and
+    /// `alerting.delivery.attempt_timeout_secs` applies to each send.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
     /// Permit plain HTTP; only for an unauthenticated sink.
     #[serde(default)]
     pub allow_http: bool,
-    /// Extra trust-anchor PEM.
+    /// Trust-anchor PEM that replaces the platform roots for this sink.
     #[serde(default)]
     pub ca_file: Option<PathBuf>,
     /// Include the command line in the payload.
@@ -162,13 +163,14 @@ pub struct SyslogSpec {
     pub transport: SyslogTransport,
     /// `host:port`, or a socket path for `unix`.
     pub address: String,
-    /// Syslog facility name.
+    /// Syslog facility name (`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`, `lpr`, `news`,
+    /// `uucp`, `cron`, `authpriv`, `ftp`, `local0`..=`local7`); an unknown name refuses startup.
     #[serde(default = "default_facility")]
     pub facility: String,
     /// APP-NAME field.
     #[serde(default = "default_app_name")]
     pub app_name: String,
-    /// Extra trust-anchor PEM.
+    /// Trust-anchor PEM that replaces the platform roots for this sink.
     #[serde(default)]
     pub ca_file: Option<PathBuf>,
     /// Message size cap, 480..=65 507 bytes.
@@ -325,7 +327,8 @@ impl AlertingConfig {
             }
             let spec = parse_at(index, sink)?;
             let name = spec.name();
-            if name.contains(NAME_SEPARATOR) {
+            // The delivery key is `sink U+001F alert id`, so the separator cannot be in a name.
+            if name.contains(DELIVERY_KEY_SEP) {
                 return Err(invalid(name, "name must not contain U+001F"));
             }
             if !seen.insert(name.to_owned()) {
@@ -395,8 +398,7 @@ fn check_webhook_url(url: &str) -> Result<bool, &'static str> {
     Ok(is_http)
 }
 
-/// Host part of `host`, `host:port` or `[v6]:port`.
-/// The host part of `host:port`, without IPv6 brackets.
+/// Host part of `host`, `host:port` or `[v6]:port`, without IPv6 brackets.
 pub fn host_of(authority: &str) -> &str {
     if let Some(inner) = authority.strip_prefix('[') {
         return inner.split_once(']').map_or(inner, |(host, _)| host);
@@ -534,32 +536,33 @@ impl CredentialResolver {
     /// value) when a required variable is unnamed, unset or empty.
     pub fn resolve(&self, spec: &SinkSpec) -> Result<ResolvedSink, ConfigError> {
         let name = spec.name();
-        let (token, username, password) = match *spec {
+        let credentials = match *spec {
             SinkSpec::Webhook(ref w) => match w.auth {
-                WebhookAuth::None => (None, None, None),
-                WebhookAuth::Bearer | WebhookAuth::Header => (
-                    Some(self.required(name, "token_env", w.token_env.as_deref())?),
-                    None,
-                    None,
-                ),
-                WebhookAuth::Basic => (
-                    None,
-                    Some(self.required(name, "username_env", w.username_env.as_deref())?),
-                    Some(self.required(name, "password_env", w.password_env.as_deref())?),
-                ),
+                WebhookAuth::None => Credentials::None,
+                WebhookAuth::Bearer | WebhookAuth::Header => {
+                    Credentials::Token(self.required(name, "token_env", w.token_env.as_deref())?)
+                }
+                WebhookAuth::Basic => Credentials::Basic {
+                    username: self.required(name, "username_env", w.username_env.as_deref())?,
+                    password: self.required(name, "password_env", w.password_env.as_deref())?,
+                },
             },
-            SinkSpec::Email(ref e) => (
-                None,
-                self.optional(name, "username_env", e.username_env.as_deref())?,
-                self.optional(name, "password_env", e.password_env.as_deref())?,
-            ),
-            SinkSpec::Stdout(_) | SinkSpec::File(_) | SinkSpec::Syslog(_) => (None, None, None),
+            SinkSpec::Email(ref e) => {
+                match (e.username_env.as_deref(), e.password_env.as_deref()) {
+                    (Some(user_var), Some(pass_var)) => Credentials::Basic {
+                        username: self.required(name, "username_env", Some(user_var))?,
+                        password: self.required(name, "password_env", Some(pass_var))?,
+                    },
+                    (None, None) => Credentials::None,
+                    (Some(_), None) => return Err(invalid(name, "password_env is required")),
+                    (None, Some(_)) => return Err(invalid(name, "username_env is required")),
+                }
+            }
+            SinkSpec::Stdout(_) | SinkSpec::File(_) | SinkSpec::Syslog(_) => Credentials::None,
         };
         Ok(ResolvedSink {
             spec: spec.clone(),
-            token,
-            username,
-            password,
+            credentials,
         })
     }
 
@@ -580,37 +583,47 @@ impl CredentialResolver {
             )),
         }
     }
+}
 
-    fn optional(
-        &self,
-        sink: &str,
-        field: &str,
-        var: Option<&str>,
-    ) -> Result<Option<SecretString>, ConfigError> {
-        var.map(|_| self.required(sink, field, var)).transpose()
+/// The secrets a sink sends, shaped so a half-set pair or a token on a sink without one cannot
+/// be built.
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a new credential shape must make every sink decide what to do with it"
+)]
+pub enum Credentials {
+    /// The sink authenticates with nothing.
+    None,
+    /// A bearer or custom-header token.
+    Token(SecretString),
+    /// A username and password pair (HTTP basic auth or SMTP).
+    Basic {
+        /// The username.
+        username: SecretString,
+        /// The password.
+        password: SecretString,
+    },
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("None"),
+            Self::Token(_) => f.debug_tuple("Token").field(&REDACTED).finish(),
+            Self::Basic { .. } => f
+                .debug_struct("Basic")
+                .field("username", &REDACTED)
+                .field("password", &REDACTED)
+                .finish(),
+        }
     }
 }
 
 /// A sink spec with its credentials resolved. Secrets never render.
+#[derive(Debug)]
 pub struct ResolvedSink {
     /// The parsed spec.
     pub spec: SinkSpec,
-    /// Bearer or header token.
-    pub token: Option<SecretString>,
-    /// Basic-auth or SMTP username.
-    pub username: Option<SecretString>,
-    /// Basic-auth or SMTP password.
-    pub password: Option<SecretString>,
-}
-
-impl std::fmt::Debug for ResolvedSink {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mark = |secret: &Option<SecretString>| secret.as_ref().map(|_| REDACTED);
-        f.debug_struct("ResolvedSink")
-            .field("spec", &self.spec)
-            .field("token", &mark(&self.token))
-            .field("username", &mark(&self.username))
-            .field("password", &mark(&self.password))
-            .finish()
-    }
+    /// The secrets the spec's `*_env` fields named.
+    pub credentials: Credentials,
 }

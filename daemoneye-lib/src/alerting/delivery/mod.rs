@@ -29,7 +29,7 @@ pub const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10);
 pub const REDRIVE_BATCH: usize = 100;
 
 /// Whole milliseconds in `duration`, saturating.
-pub(super) fn millis(duration: Duration) -> u64 {
+pub fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -41,7 +41,14 @@ pub(super) fn to_u64(count: usize) -> u64 {
 /// A publisher could not hand an alert on.
 #[derive(Debug, Error)]
 #[error("alert publish failed: {0}")]
-pub struct PublishError(pub String);
+pub struct PublishError(String);
+
+impl PublishError {
+    /// An error carrying `reason`, which is logged and never parsed.
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self(reason.into())
+    }
+}
 
 /// Announces a persisted alert to subscribers. A failure is counted and logged, never a delivery
 /// failure: the alert is already durable.

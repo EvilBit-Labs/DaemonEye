@@ -12,7 +12,8 @@ const MAX_ANCESTORS: usize = 16;
 /// Byte cap on every value written into the alert context.
 const MAX_VALUE_BYTES: usize = 256;
 const TAG_ENRICHED: &str = "enriched";
-const TAG_PARTIAL: &str = "enrichment=partial";
+/// Tag on an alert whose enrichment did not complete.
+pub const TAG_PARTIAL: &str = "enrichment=partial";
 
 /// Host facts stamped onto every enriched alert.
 #[derive(Debug, Clone)]
@@ -25,7 +26,7 @@ pub struct EnrichContext {
 
 /// Return `alert` with ancestry, host and agent version written into its context.
 ///
-/// `ancestry` lists up to 16 ancestors nearest-first as `pid:name` joined by `>`. Each ancestor
+/// `ancestry` lists up to `MAX_ANCESTORS` ancestors nearest-first as `pid:name` joined by `>`. Each ancestor
 /// is the latest stored record for its pid that did not start after its child, so a recycled pid
 /// cannot name an unrelated process. Synchronous and blocking: call it from `spawn_blocking`.
 #[must_use]

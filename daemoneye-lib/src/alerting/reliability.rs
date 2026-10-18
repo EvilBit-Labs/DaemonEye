@@ -24,14 +24,21 @@ const HTTP_TOO_MANY_REQUESTS: u16 = 429;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum DeliveryError {
+    /// Retrying may succeed.
     Transient {
+        /// What failed.
         class: DeliveryErrorClass,
+        /// The peer's own wait hint, when it gave one.
         retry_after: Option<Duration>,
     },
+    /// The peer answered and refused this alert; retrying cannot help.
     Permanent {
+        /// What failed.
         class: DeliveryErrorClass,
     },
+    /// The sink's configuration cannot work (credential, certificate, protocol).
     Misconfigured {
+        /// What failed.
         class: DeliveryErrorClass,
     },
 }
@@ -128,18 +135,37 @@ impl From<io::Error> for DeliveryError {
 /// Exponential backoff with full jitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryPolicy {
-    pub max_attempts: u32,
-    pub base: Duration,
-    pub cap: Duration,
+    max_attempts: u32,
+    base: Duration,
+    cap: Duration,
 }
 
 impl RetryPolicy {
+    /// At most `max_attempts` sends (never fewer than one), with delays drawn from
+    /// `[0, min(cap, base * 2^attempt)]`. A `base` above `cap` is capped; the config loader
+    /// refuses that pairing before it gets here.
     pub const fn new(max_attempts: u32, base: Duration, cap: Duration) -> Self {
         Self {
-            max_attempts,
-            base,
+            max_attempts: if max_attempts == 0 { 1 } else { max_attempts },
+            base: if base.as_nanos() > cap.as_nanos() {
+                cap
+            } else {
+                base
+            },
             cap,
         }
+    }
+
+    /// Sends allowed per row, including the first.
+    #[must_use]
+    pub const fn max_attempts(&self) -> u32 {
+        self.max_attempts
+    }
+
+    /// Longest delay between two attempts.
+    #[must_use]
+    pub const fn cap(&self) -> Duration {
+        self.cap
     }
 
     /// Uniform draw in `[0, min(cap, base * 2^attempt)]`. The draw happens
@@ -150,33 +176,44 @@ impl RetryPolicy {
         let ceiling_nanos = u64::try_from(ceiling.as_nanos()).unwrap_or(u64::MAX);
         Duration::from_nanos(rng.random_range(0..=ceiling_nanos))
     }
-
-    /// Parse a `Retry-After` header. Only ASCII delta-seconds are honoured
-    /// (clamped to `cap`); HTTP-dates and overflowing values yield `None`.
-    pub fn retry_after(&self, header: &str) -> Option<Duration> {
-        let value = header.trim();
-        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-        let seconds = value.parse::<u64>().ok()?;
-        Some(Duration::from_secs(seconds).min(self.cap))
-    }
 }
 
+/// Parse a `Retry-After` header. Only ASCII delta-seconds are honoured (clamped to `cap`);
+/// HTTP-dates and overflowing values yield `None`.
+#[must_use]
+pub fn parse_retry_after(header: &str, cap: Duration) -> Option<Duration> {
+    let value = header.trim();
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let seconds = value.parse::<u64>().ok()?;
+    Some(Duration::from_secs(seconds).min(cap))
+}
+
+/// Where a [`CircuitBreaker`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub enum BreakerState {
+    /// Calls go through.
     Closed,
+    /// No calls until the cool-down ends.
     Open,
+    /// One probe is out; its answer closes or reopens the breaker.
     HalfOpen,
 }
 
 /// Answer to "may I call the sink now?".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[must_use = "a granted probe must be reported back, or the breaker stays half-open"]
 pub enum Permit {
+    /// The breaker is closed.
     Allow,
+    /// The breaker was open and its cool-down is over: make exactly one call and report the
+    /// answer with [`CircuitBreaker::record_success`], [`CircuitBreaker::record_failure`] or
+    /// [`CircuitBreaker::abandon_probe`].
     AllowProbe,
+    /// Make no call.
     Deny,
 }
 
@@ -188,6 +225,11 @@ enum Inner {
 }
 
 /// Closed / open / half-open breaker. An open breaker makes no calls.
+///
+/// Consecutive transient failures open it at the threshold and a misconfigured outcome opens it
+/// at once. After the cool-down [`permit`](Self::permit) grants one probe; the probe's answer
+/// closes the breaker (a success, or a permanent rejection, which proves the sink is up) or
+/// reopens it for a full cool-down.
 #[derive(Debug)]
 pub struct CircuitBreaker {
     failure_threshold: u32,
@@ -196,9 +238,11 @@ pub struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
+    /// Opens after `failure_threshold` consecutive transient failures (never fewer than one)
+    /// and probes again `cooldown` later.
     pub fn new(failure_threshold: u32, cooldown: Duration) -> Self {
         Self {
-            failure_threshold,
+            failure_threshold: failure_threshold.max(1),
             cooldown,
             inner: Inner::Closed {
                 failures: 0,
@@ -207,6 +251,7 @@ impl CircuitBreaker {
         }
     }
 
+    /// The sink answered well: close, and forget the failure count.
     pub fn record_success(&mut self) {
         let since = match self.inner {
             Inner::Closed { since, .. } => since,
@@ -215,9 +260,16 @@ impl CircuitBreaker {
         self.inner = Inner::Closed { failures: 0, since };
     }
 
+    /// The sink failed. A transient failure counts toward the threshold and reopens a half-open
+    /// breaker; a misconfigured one opens it at once; a permanent one is an answer, so it closes
+    /// a half-open breaker and is otherwise ignored.
     pub fn record_failure(&mut self, error: &DeliveryError) {
         match *error {
-            DeliveryError::Permanent { .. } => {}
+            DeliveryError::Permanent { .. } => {
+                if matches!(self.inner, Inner::HalfOpen) {
+                    self.record_success();
+                }
+            }
             DeliveryError::Misconfigured { .. } => self.open(),
             DeliveryError::Transient { .. } => match self.inner {
                 Inner::Closed { failures, since } => {
@@ -237,6 +289,16 @@ impl CircuitBreaker {
         }
     }
 
+    /// A granted probe produced no answer (the call never went out): back to open for a full
+    /// cool-down, so the breaker cannot stay half-open with nothing in flight.
+    pub fn abandon_probe(&mut self) {
+        if matches!(self.inner, Inner::HalfOpen) {
+            self.open();
+        }
+    }
+
+    /// Whether a call may go out now. Moves an open breaker whose cool-down has passed to
+    /// half-open, granting the one probe; the caller must report that probe's answer back.
     pub fn permit(&mut self) -> Permit {
         match self.inner {
             Inner::Closed { .. } => Permit::Allow,
@@ -248,6 +310,7 @@ impl CircuitBreaker {
         }
     }
 
+    /// The breaker's state as a plain value.
     pub const fn state(&self) -> BreakerState {
         match self.inner {
             Inner::Closed { .. } => BreakerState::Closed,

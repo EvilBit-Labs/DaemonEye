@@ -106,17 +106,19 @@ impl SyslogSink {
     ///
     /// # Errors
     ///
-    /// [`AlertingError::ConfigurationError`] when the spec is not a syslog spec, the
-    /// transport is unsupported on this platform, the TLS host is not a valid name, or
-    /// the `ca_file` cannot be read or holds no certificate. Messages never carry the
-    /// address.
+    /// [`AlertingError::ConfigurationError`] when the spec is not a syslog spec, the facility
+    /// is not one syslog defines, the transport is unsupported on this platform, the TLS host
+    /// is not a valid name, or the `ca_file` cannot be read or holds no certificate. Messages
+    /// never carry the address.
     pub fn new(resolved: &ResolvedSink, delivery: &DeliveryConfig) -> Result<Self, AlertingError> {
         let SinkSpec::Syslog(ref spec) = resolved.spec else {
             return Err(config_error("not a syslog spec"));
         };
+        let facility = parse_facility(&spec.facility)
+            .ok_or_else(|| config_error("syslog facility is not a name syslog defines"))?;
         Ok(Self {
             name: spec.name.clone(),
-            facility: parse_facility(&spec.facility),
+            facility,
             app_name: spec.app_name.clone(),
             max_bytes: spec.max_message_bytes,
             flags: IncludeFlags {

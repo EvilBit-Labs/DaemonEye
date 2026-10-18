@@ -25,7 +25,7 @@ use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_lib::alerting::{
     AlertManager, CredentialResolver, DeliveryAggregate, NoopPublisher, SHUTDOWN_DRAIN,
 };
-use daemoneye_lib::config::{AlertSinkConfig, AlertingConfig};
+use daemoneye_lib::config::{AlertSinkConfig, AlertingConfig, DeliveryConfig};
 use daemoneye_lib::models::{DeliveryReason, DeliveryState, Uuid};
 use daemoneye_lib::storage::{CompleteOutcome, EventStore};
 use serde_json::json;
@@ -238,11 +238,12 @@ async fn control_the_same_alert_raised_against_a_healthy_store_is_enqueued_and_d
 async fn a_row_left_retrying_by_shutdown_is_redelivered_with_the_same_identity_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let mock = MockHttp::start(vec![Response::Status(503)]).await;
-    // First manager: a jitter ceiling far above the shutdown window, so no second send can race it.
+    // First manager: the largest jitter ceiling the config allows, far above the shutdown window,
+    // so no second send can race it.
     let mut slow = alerting(vec![webhook_sink(&mock.url())]);
-    slow.delivery.initial_backoff_ms = 30_000;
+    slow.delivery.initial_backoff_ms = DeliveryConfig::INITIAL_BACKOFF_MS_MAX;
     slow.delivery.max_backoff_secs = 60;
-    // Second manager: a 1 s cap makes the 30 s schedule count as due at once.
+    // Second manager: a 1 s cap makes the 10 s schedule count as due at once.
     let config = alerting(vec![webhook_sink(&mock.url())]);
     let (store, _keep) = {
         let (d, s) = temp_store();

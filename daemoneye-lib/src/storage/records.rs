@@ -30,8 +30,8 @@ pub(super) const ALERTS_TABLE: TableDefinition<'static, &str, &[u8]> =
 pub(super) const ALERT_DELIVERIES_TABLE: TableDefinition<'static, &str, &[u8]> =
     TableDefinition::new("alert_deliveries");
 
-/// Separator between sink and alert id in a delivery key.
-pub(super) const DELIVERY_KEY_SEP: char = '\u{1f}';
+/// Separator between sink and alert id in a delivery key; a sink name may not contain it.
+pub const DELIVERY_KEY_SEP: char = '\u{1f}';
 
 /// The `alert_deliveries` key for one sink and alert.
 pub(super) fn delivery_key(sink: &str, alert_id: Uuid) -> String {

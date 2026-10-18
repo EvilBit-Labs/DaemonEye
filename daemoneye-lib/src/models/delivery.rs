@@ -9,17 +9,30 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum DeliveryErrorClass {
+    /// The peer could not be reached or dropped the connection.
     Connect,
+    /// The attempt ran past its deadline.
     Timeout,
+    /// The TLS exchange failed for a reason other than verification.
     Tls,
+    /// The peer's certificate was not accepted.
     TlsVerification,
+    /// A non-success HTTP status.
     HttpStatus(u16),
+    /// A non-success SMTP reply code.
     SmtpStatus(u16),
+    /// The peer and the sink disagree on the protocol (no STARTTLS, a malformed reply).
     Protocol,
+    /// A read or write failed.
     Io,
+    /// The alert could not be rendered or the peer refused its content.
     Payload,
+    /// The peer refused a recipient.
     Recipient,
+    /// The credential was refused.
     Auth,
+    /// The sink reported that its own configuration cannot work.
+    Config,
 }
 
 impl fmt::Display for DeliveryErrorClass {
@@ -36,6 +49,7 @@ impl fmt::Display for DeliveryErrorClass {
             Self::Payload => f.write_str("payload"),
             Self::Recipient => f.write_str("recipient"),
             Self::Auth => f.write_str("auth"),
+            Self::Config => f.write_str("config"),
         }
     }
 }
@@ -57,7 +71,8 @@ pub enum DeliveryState {
 }
 
 impl DeliveryState {
-    /// Whether the row will never be attempted again without an operator redrive.
+    /// Whether the row is finished: it is attempted again only if a redrive moves it back to
+    /// `Pending`, which only a dead letter can be.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(
@@ -67,7 +82,7 @@ impl DeliveryState {
     }
 }
 
-/// Why a row was dead-lettered.
+/// Why a row was dead-lettered; set only while the state is `DeadLettered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum DeliveryReason {
@@ -96,7 +111,7 @@ pub struct DeliveryRecord {
     pub severity: AlertSeverity,
     /// Attempts since enqueue or the last redrive.
     pub attempts: u32,
-    /// Times an operator redrove this row.
+    /// Times the row was redriven, by an operator or automatically.
     pub redrives: u32,
     /// Class of the last failure, never free text.
     pub last_error: Option<DeliveryErrorClass>,
@@ -112,11 +127,51 @@ pub struct DeliveryRecord {
     pub deduplication_key: String,
 }
 
+/// Every state change goes through one of these, so the fields that belong to a state are set
+/// together: a terminal state always has `terminal_at_ms`, only a dead letter has `reason`, only
+/// a suppressed duplicate has `suppressed_by`.
 impl DeliveryRecord {
     /// Abandon the row for `reason` at `now_ms`.
     pub const fn dead_letter(&mut self, reason: DeliveryReason, now_ms: u64) {
         self.state = DeliveryState::DeadLettered;
         self.reason = Some(reason);
         self.terminal_at_ms = Some(now_ms);
+    }
+
+    /// The sink accepted the alert at `now_ms`.
+    pub const fn deliver(&mut self, now_ms: u64) {
+        self.state = DeliveryState::Delivered;
+        self.reason = None;
+        self.terminal_at_ms = Some(now_ms);
+    }
+
+    /// Mark the row a duplicate of `survivor`, never to be sent.
+    pub const fn suppress(&mut self, survivor: Uuid, now_ms: u64) {
+        self.state = DeliveryState::SuppressedDuplicate;
+        self.suppressed_by = Some(survivor);
+        self.terminal_at_ms = Some(now_ms);
+    }
+
+    /// Take the row for an attempt starting at `now_ms`.
+    pub const fn claim(&mut self, now_ms: u64) {
+        self.state = DeliveryState::Retrying;
+        self.attempts = self.attempts.saturating_add(1);
+        self.next_attempt_ms = now_ms;
+    }
+
+    /// Keep the row open for another attempt no earlier than `at_ms`.
+    pub const fn retry_at(&mut self, at_ms: u64) {
+        self.state = DeliveryState::Retrying;
+        self.next_attempt_ms = at_ms;
+    }
+
+    /// Move a dead letter back to `Pending` at `now_ms`, with a fresh attempt budget.
+    pub const fn redrive(&mut self, now_ms: u64) {
+        self.state = DeliveryState::Pending;
+        self.reason = None;
+        self.attempts = 0;
+        self.redrives = self.redrives.saturating_add(1);
+        self.next_attempt_ms = now_ms;
+        self.terminal_at_ms = None;
     }
 }

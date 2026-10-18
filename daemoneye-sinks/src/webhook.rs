@@ -6,13 +6,13 @@ use crate::key::wire_key;
 use async_trait::async_trait;
 use daemoneye_lib::alerting::config::{WebhookAuth, WebhookSpec};
 use daemoneye_lib::alerting::{
-    AlertSink, AlertingError, DeliveryError, DeliveryResult, ExternalAlert, IncludeFlags,
-    ResolvedSink, RetryPolicy, SinkSpec,
+    AlertSink, AlertingError, Credentials, DeliveryError, DeliveryResult, ExternalAlert,
+    IncludeFlags, ResolvedSink, SinkSpec, parse_retry_after,
 };
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::Alert;
 use reqwest::header::{HeaderName, HeaderValue, RETRY_AFTER};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 use std::time::{Duration, Instant};
 
 const MAX_RETRY_AFTER: Duration = Duration::from_hours(1);
@@ -73,40 +73,43 @@ fn sensitive(value: &str) -> Result<HeaderValue, AlertingError> {
     Ok(header)
 }
 
-fn secret<'a>(value: Option<&'a SecretString>, what: &str) -> Result<&'a str, AlertingError> {
-    value
-        .map(ExposeSecret::expose_secret)
-        .ok_or_else(|| config_error(&format!("webhook {what} is not resolved")))
-}
-
+/// The auth header for the spec's scheme; the resolver shaped the credentials to match it.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "WebhookAuth is non_exhaustive"
+)]
 fn auth_header(
     spec: &WebhookSpec,
     resolved: &ResolvedSink,
 ) -> Result<Option<(HeaderName, HeaderValue)>, AlertingError> {
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "WebhookAuth is non_exhaustive"
-    )]
+    let mismatch = || config_error("webhook credentials do not match its auth scheme");
+    let token = || match resolved.credentials {
+        Credentials::Token(ref token) => Ok(token.expose_secret()),
+        Credentials::None | Credentials::Basic { .. } => Err(mismatch()),
+    };
     match spec.auth {
-        WebhookAuth::None => Ok(None),
-        WebhookAuth::Bearer => {
-            let token = secret(resolved.token.as_ref(), "token")?;
-            Ok(Some((
-                reqwest::header::AUTHORIZATION,
-                sensitive(&format!("Bearer {token}"))?,
-            )))
-        }
-        WebhookAuth::Basic => {
-            let user = secret(resolved.username.as_ref(), "username")?;
-            let pass = secret(resolved.password.as_ref(), "password")?;
-            let encoded = base64(format!("{user}:{pass}").as_bytes());
-            Ok(Some((
-                reqwest::header::AUTHORIZATION,
-                sensitive(&format!("Basic {encoded}"))?,
-            )))
-        }
+        WebhookAuth::None => match resolved.credentials {
+            Credentials::None => Ok(None),
+            Credentials::Token(_) | Credentials::Basic { .. } => Err(mismatch()),
+        },
+        WebhookAuth::Bearer => Ok(Some((
+            reqwest::header::AUTHORIZATION,
+            sensitive(&format!("Bearer {}", token()?))?,
+        ))),
+        WebhookAuth::Basic => match resolved.credentials {
+            Credentials::Basic {
+                ref username,
+                ref password,
+            } => {
+                let pair = format!("{}:{}", username.expose_secret(), password.expose_secret());
+                Ok(Some((
+                    reqwest::header::AUTHORIZATION,
+                    sensitive(&format!("Basic {}", base64(pair.as_bytes())))?,
+                )))
+            }
+            Credentials::None | Credentials::Token(_) => Err(mismatch()),
+        },
         WebhookAuth::Header => {
-            let token = secret(resolved.token.as_ref(), "token")?;
             let name = spec
                 .header_name
                 .as_deref()
@@ -114,7 +117,7 @@ fn auth_header(
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_invalid| {
                 config_error("webhook header_name is not a valid header name")
             })?;
-            Ok(Some((header_name, sensitive(token)?)))
+            Ok(Some((header_name, sensitive(token()?)?)))
         }
         _ => Err(config_error("unsupported webhook auth scheme")),
     }
@@ -160,14 +163,15 @@ fn header_safe(value: &str) -> HeaderValue {
 impl WebhookSink {
     /// Build the sink for a resolved webhook spec.
     ///
+    /// The client timeout is the sink's `timeout_secs`; the worker's global attempt timeout
+    /// still caps each send from outside, so the smaller of the two applies. Nothing else in
+    /// `delivery` reaches the client, which is why that argument goes unread here.
+    ///
     /// # Errors
     ///
-    /// [`AlertingError::ConfigurationError`] when the spec is not a webhook, a credential
-    /// is missing or not a valid header value, the URL does not parse, or the `ca_file`
-    /// cannot be read. Messages never carry the URL or a credential.
-    ///
-    /// The client timeout is the sink's `timeout_secs`; the worker's global attempt
-    /// timeout still caps each send from outside, so the smaller of the two applies.
+    /// [`AlertingError::ConfigurationError`] when the spec is not a webhook, the credentials
+    /// do not fit the auth scheme or are not a valid header value, the URL does not parse, or
+    /// the `ca_file` cannot be read. Messages never carry the URL or a credential.
     pub fn new(resolved: &ResolvedSink, _delivery: &DeliveryConfig) -> Result<Self, AlertingError> {
         let SinkSpec::Webhook(ref spec) = resolved.spec else {
             return Err(config_error("not a webhook spec"));
@@ -203,7 +207,7 @@ fn judge(response: reqwest::Response) -> Result<(), DeliveryError> {
         .headers()
         .get(RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|text| RetryPolicy::new(1, Duration::ZERO, MAX_RETRY_AFTER).retry_after(text));
+        .and_then(|text| parse_retry_after(text, MAX_RETRY_AFTER));
     drop(response);
     if status.is_success() {
         Ok(())

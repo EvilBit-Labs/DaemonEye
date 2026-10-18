@@ -44,9 +44,11 @@ pub mod schema;
 
 pub use bucket::DAILY_MS;
 pub use deliveries::{
-    Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries, RedriveReport,
+    Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries, PruneReport,
+    RedriveReport,
 };
 pub use error::StorageError;
+pub use records::DELIVERY_KEY_SEP;
 pub use schema::{
     BundleManifest, BundleSigner, GapRecord, MigrationReport, SCHEMA_VERSION, SchemaClassification,
     SignerError,
@@ -492,9 +494,10 @@ impl EventStore {
         Ok(out)
     }
 
-    /// The newest record for `pid` whose effective start ([`effective_start_ms`]) is not later
-    /// than `not_after_ms`, or `None`. Scans buckets newest-first and stops at the first hit, so
-    /// a recycled pid cannot name a process that started after `not_after_ms`.
+    /// The most recently ingested record for `pid` whose effective start ([`effective_start_ms`])
+    /// is not later than `not_after_ms`, or `None`. Newest means ingest order (buckets and
+    /// postings walked in reverse), not start time. Scanning stops at the first hit, so a
+    /// recycled pid cannot name a process that started after `not_after_ms`.
     pub fn latest_by_pid(
         &self,
         pid: u32,
@@ -696,7 +699,8 @@ impl EventStore {
         deliveries::get_delivery(&self.db, sink, alert_id)
     }
 
-    /// Non-terminal rows of `sink`, oldest enqueue first; undecodable rows are counted.
+    /// Non-terminal rows of `sink`, oldest enqueue first; undecodable rows and dead letters are
+    /// counted from the same scan.
     pub fn open_deliveries(&self, sink: &str) -> Result<OpenDeliveries, StorageError> {
         deliveries::open_deliveries(&self.db, sink)
     }
@@ -753,7 +757,11 @@ impl EventStore {
 
     /// Delete terminal rows (any sink) that went terminal more than `retention_ms` ago.
     /// Alerts and non-terminal rows are never touched.
-    pub fn prune_deliveries(&self, now_ms: u64, retention_ms: u64) -> Result<usize, StorageError> {
+    pub fn prune_deliveries(
+        &self,
+        now_ms: u64,
+        retention_ms: u64,
+    ) -> Result<PruneReport, StorageError> {
         deliveries::prune_deliveries(&self.db, now_ms, retention_ms)
     }
 
@@ -770,6 +778,14 @@ impl EventStore {
     /// Fetch every persisted alert.
     pub fn get_all_alerts(&self) -> Result<Vec<Alert>, StorageError> {
         records::all_alerts(&self.db)
+    }
+
+    /// The underlying redb handle. Test seam: redb admits one handle per file, so a test that
+    /// wants to break and repair a table under a running store has to go through this one.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn database(&self) -> &Database {
+        &self.db
     }
 
     /// Persist (upsert) scan metadata (carrying host identity, U9).

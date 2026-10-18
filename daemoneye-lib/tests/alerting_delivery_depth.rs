@@ -18,7 +18,7 @@ mod fixtures;
 
 use daemoneye_lib::models::{AlertSeverity, DeliveryReason, DeliveryState, Uuid};
 use daemoneye_lib::storage::EventStore;
-use fixtures::{Act, Fake, alert, config, now_ms, rig_over, row, settle, temp_store};
+use fixtures::{Act, Fake, alert, config, now_ms, rig_over, row, run_for, settle, temp_store};
 
 /// Persist `count` dead-lettered rows for sink `net`, as an earlier run would have left them.
 fn seed_dead_letters(store: &EventStore, count: usize) -> Vec<Uuid> {
@@ -76,4 +76,43 @@ async fn dead_letter_depth_is_seeded_from_the_store() {
 
     assert_eq!(r.store.dead_letter_count("net").unwrap(), 3);
     assert_eq!(r.manager.health().sinks[0].dead_letters, 3);
+    for (_, dead) in r.manager.dead_letters("net").await {
+        assert_eq!(
+            dead.reason,
+            Some(DeliveryReason::AttemptsExhausted),
+            "a cap of zero never spends a redrive budget, so the real reason stays"
+        );
+    }
+}
+
+/// A local sink's startup redrive that the open-row cap cut short continues as rows free up,
+/// one batch per pass, until the backlog is drained.
+#[tokio::test(start_paused = true)]
+async fn a_local_startup_redrive_cut_short_by_the_cap_continues() {
+    let (_dir, store) = temp_store();
+    let ids = seed_dead_letters(&store, 5);
+    let file = Fake::new("net", true, Act::Ok);
+
+    let r = rig_over(
+        store,
+        vec![file.boxed()],
+        config(|c| c.delivery.max_open_rows_per_sink = 2),
+    )
+    .await;
+    settle().await;
+    let delivered = |r: &fixtures::Rig| {
+        ids.iter()
+            .filter(|id| row(&r.store, "net", **id).state == DeliveryState::Delivered)
+            .count()
+    };
+    assert_eq!(
+        delivered(&r),
+        2,
+        "startup redrive moves only the free capacity"
+    );
+
+    run_for(12).await;
+
+    assert_eq!(delivered(&r), 5);
+    assert_eq!(r.manager.health().sinks[0].dead_letters, 0);
 }

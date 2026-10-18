@@ -9,7 +9,7 @@ use rustls::pki_types::ServerName;
 use std::future::Future;
 use std::io::ErrorKind;
 use std::time::Duration;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 use tokio_rustls::TlsConnector;
@@ -104,22 +104,26 @@ async fn udp_send(
         Some(ref udp) => udp.send(line.as_bytes()).await.map(drop),
         None => Ok(()),
     };
-    // ICMP port-unreachable for an earlier datagram: nothing to confirm.
+    // ICMP port-unreachable, reported on this send for an earlier datagram: the receiver is
+    // not listening, so this is a transient connect failure and the row is retried. The socket
+    // itself is still good.
     let refused = matches!(outcome, Err(ref error) if error.kind() == ErrorKind::ConnectionRefused);
     if outcome.is_err() && !refused {
         *guard = None;
     }
     drop(guard);
-    match outcome {
-        Err(error) if !refused => Err(error.into()),
-        Err(_) | Ok(()) => Ok(()),
-    }
+    outcome.map_err(DeliveryError::from)
 }
 
-/// Whether the peer has closed (or spoken to) a stream we only ever write to.
-fn peer_closed(stream: &TcpStream) -> bool {
+/// Whether a stream we only ever write to is still open: a read that stays pending means the
+/// peer is quiet, anything else (EOF, an error, bytes) means the connection is not worth
+/// reusing. Reading through the TLS layer lets rustls consume post-handshake records such as
+/// TLS 1.3 session tickets, which a raw-socket probe would mistake for the peer speaking.
+async fn is_open<S: AsyncRead + Unpin>(stream: &mut S) -> bool {
     let mut probe = [0_u8; 1];
-    !matches!(stream.try_read(&mut probe), Err(ref error) if error.kind() == ErrorKind::WouldBlock)
+    tokio::time::timeout(Duration::ZERO, stream.read(&mut probe))
+        .await
+        .is_err()
 }
 
 async fn write_frame<W: AsyncWrite + Unpin>(
@@ -137,16 +141,20 @@ async fn write_frame<W: AsyncWrite + Unpin>(
 
 /// Send `frame` on the cached connection, dialling first when there is none or the
 /// peer closed it; any failure discards the connection.
-async fn stream_send<S: AsyncWrite + Unpin>(
+async fn stream_send<S: AsyncRead + AsyncWrite + Unpin>(
     slot: &Mutex<Option<S>>,
-    is_closed: impl Fn(&S) -> bool,
     connect: impl Future<Output = Result<S, DeliveryError>>,
     frame: &[u8],
     limit: Duration,
 ) -> Result<(), DeliveryError> {
     let mut guard = slot.lock().await;
-    let mut stream = match guard.take().filter(|stream| !is_closed(stream)) {
-        Some(stream) => stream,
+    let mut cached = guard.take();
+    let reusable = match cached {
+        Some(ref mut stream) => is_open(stream).await,
+        None => false,
+    };
+    let mut stream = match cached.filter(|_stream| reusable) {
+        Some(open) => open,
         None => connect.await?,
     };
     // The stream is out of the slot while writing, so a cancelled or failed write drops it
@@ -182,7 +190,6 @@ impl Transport {
             } => {
                 stream_send(
                     conn,
-                    peer_closed,
                     dial(address, limit),
                     octet_counted(line).as_bytes(),
                     limit,
@@ -197,7 +204,6 @@ impl Transport {
             } => {
                 stream_send(
                     conn,
-                    |tls: &TlsStream<TcpStream>| peer_closed(tls.get_ref().0),
                     dial_tls(address, server_name, connector, limit),
                     octet_counted(line).as_bytes(),
                     limit,
@@ -236,17 +242,27 @@ impl Transport {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::stream_send;
+    use super::{is_open, stream_send};
     use std::future::ready;
     use std::io;
     use std::pin::Pin;
     use std::task::{Context, Poll};
     use std::time::Duration;
-    use tokio::io::AsyncWrite;
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
     use tokio::sync::Mutex;
 
-    /// A stream whose writes never complete.
+    /// A quiet peer: reads stay pending.
     struct Stuck;
+
+    impl AsyncRead for Stuck {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
 
     impl AsyncWrite for Stuck {
         fn poll_write(
@@ -266,16 +282,17 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_quiet_peer_is_open_and_an_eof_or_spoken_peer_is_not() {
+        assert!(is_open(&mut Stuck).await);
+        assert!(!is_open(&mut tokio::io::empty()).await, "EOF");
+        assert!(!is_open(&mut b"unexpected".as_slice()).await, "bytes");
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_cancelled_write_drops_the_cached_stream() {
         let slot = Mutex::new(Some(Stuck));
-        let send = stream_send(
-            &slot,
-            |_stream| false,
-            ready(Ok(Stuck)),
-            b"frame",
-            Duration::from_mins(1),
-        );
+        let send = stream_send(&slot, ready(Ok(Stuck)), b"frame", Duration::from_mins(1));
         tokio::select! {
             result = send => panic!("write completed: {result:?}"),
             () = tokio::time::sleep(Duration::from_millis(10)) => {}

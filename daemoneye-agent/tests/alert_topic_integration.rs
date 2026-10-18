@@ -1,6 +1,11 @@
 //! `events.alert.new`: publish, raw delivery and the delivery-worker wake signal.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unnecessary_wraps
+)]
 
 use async_trait::async_trait;
 use daemoneye_agent::alert_publisher::{BrokerPublisher, spawn_wake_subscriber};
@@ -8,6 +13,7 @@ use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_eventbus::topics::alert as alert_topic;
 use daemoneye_lib::alerting::{
     AlertManager, AlertPublisher, AlertSink, AlertingError, DeliveryResult, NoopPublisher,
+    PublishError,
 };
 use daemoneye_lib::config::AlertingConfig;
 use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord, Uuid};
@@ -31,12 +37,12 @@ fn sample_alert() -> Alert {
     )
 }
 
-fn masked(_alert: &Alert) -> Vec<u8> {
-    PROJECTED.to_vec()
+fn masked(_alert: &Alert) -> Result<Vec<u8>, PublishError> {
+    Ok(PROJECTED.to_vec())
 }
 
-fn oversize(_alert: &Alert) -> Vec<u8> {
-    vec![0; OVERSIZE_PAYLOAD]
+fn oversize(_alert: &Alert) -> Result<Vec<u8>, PublishError> {
+    Ok(vec![0; OVERSIZE_PAYLOAD])
 }
 
 async fn broker(dir: &tempfile::TempDir) -> Arc<DaemoneyeBroker> {
@@ -86,7 +92,10 @@ async fn publish_returns_an_error_when_the_broker_refuses() {
 
     let error = publisher.publish(&sample_alert()).await.unwrap_err();
 
-    assert!(error.0.contains("1MB"), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("1MB"),
+        "unexpected error: {error}"
+    );
 }
 
 /// Reports each alert id it is asked to send.

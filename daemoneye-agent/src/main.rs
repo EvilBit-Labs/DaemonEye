@@ -304,8 +304,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         warn!("Event bus unavailable; stored alerts will not be published");
         Arc::new(alerting::NoopPublisher)
     };
-    // Refuses startup when an enabled sink names a credential variable that is unset or empty.
     daemoneye_sinks::ensure_crypto_provider();
+    // Refuses startup when an enabled sink names a credential variable that is unset or empty.
     let alert_sinks = build_sinks(&config.alerting, &alerting::CredentialResolver::from_env())?;
     let enrich_context = alerting::EnrichContext {
         hostname: sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_owned()),
@@ -613,7 +613,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if !alerts.is_empty() {
                     info!(count = alerts.len(), "Generated alerts");
                 }
-                // Every alert is stored with its delivery rows, so its completeness marker is readable later.
+                // Every alert the store accepts is stored with its delivery rows, so its completeness
+                // marker is readable later; one it refuses goes once to the local sinks only.
                 let stored_alerts = enrich_and_enqueue(&event_store, &alert_manager, &alerts, &enrich_context).await;
                 if stored_alerts != alerts.len() {
                     warn!(
@@ -621,6 +622,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         total = alerts.len(),
                         "Some alerts were not persisted; the evaluated mark stays, so a restart re-evaluates this window"
                     );
+                    telemetry.record_error();
                 }
                 // The cycle is complete once every alert is stored: a restart resumes from here, and
                 // so does the next cycle, whose window covers this one again until every alert of it
@@ -736,24 +738,46 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Emit one event at warn when `unhealthy`, else at info; `tracing::event!` needs the level
+/// as a literal, so the fields are written once here.
+macro_rules! health_event {
+    ($unhealthy:expr, $($field:tt)*) => {
+        if $unhealthy {
+            warn!($($field)*);
+        } else {
+            info!($($field)*);
+        }
+    };
+}
+
 /// Log the alert delivery roll-up: aggregate, per-sink breaker and dead-letter counts, store and
-/// publish failures (R23).
+/// publish failures (R23). Anything unhealthy logs at warn, the rest at info.
 fn log_delivery_health(manager: &alerting::AlertManager) {
     let health = manager.health();
     let aggregate = format!("{:?}", health.aggregate);
-    let (store_failures, publish_failures) = (health.store_failures, health.publish_failures);
-    info!(
+    let (store_failures, publish_failures, unpersisted_alerts) = (
+        health.store_failures,
+        health.publish_failures,
+        health.unpersisted_alerts,
+    );
+    health_event!(
+        health.aggregate != alerting::DeliveryAggregate::Healthy,
         aggregate,
-        store_failures, publish_failures, "Alert delivery health"
+        store_failures,
+        publish_failures,
+        unpersisted_alerts,
+        "Alert delivery health"
     );
     for sink in &health.sinks {
         let (name, breaker) = (sink.name.as_str(), format!("{:?}", sink.breaker));
         let last_error = sink.last_error.as_ref().map(ToString::to_string);
-        info!(
+        health_event!(
+            sink.is_unhealthy(),
             sink = name,
             breaker,
             is_local = sink.is_local,
             misconfigured = sink.misconfigured,
+            failing = sink.failing,
             fire_and_forget = sink.fire_and_forget,
             consecutive_failures = sink.consecutive_failures,
             attempts = sink.attempts,

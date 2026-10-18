@@ -14,7 +14,7 @@ use daemoneye_lib::alerting::{
     AlertManager, AlertPublisher, AlertSink, AlertingError, DeliveryError, DeliveryResult,
     NoopPublisher, PublishError,
 };
-use daemoneye_lib::config::AlertingConfig;
+use daemoneye_lib::config::{AlertingConfig, DeliveryConfig};
 use daemoneye_lib::models::{
     Alert, AlertSeverity, Completeness, DeliveryRecord, ProcessRecord, Uuid,
 };
@@ -22,6 +22,7 @@ use daemoneye_lib::storage::EventStore;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -31,9 +32,13 @@ use tokio::time::Instant;
 pub enum Act {
     Ok,
     Transient,
+    /// A 429 carrying `Retry-After` of this many seconds.
+    TransientRetryAfter(u64),
     Permanent,
     Misconfigured,
     Hang,
+    /// The send panics, as a buggy sink would.
+    Panic,
 }
 
 #[derive(Debug, Clone)]
@@ -122,9 +127,13 @@ impl AlertSink for Handle {
                 duration_ms: 0,
             }),
             Act::Transient => Err(DeliveryError::from_http_status(503, None).into()),
+            Act::TransientRetryAfter(secs) => {
+                Err(DeliveryError::from_http_status(429, Some(Duration::from_secs(secs))).into())
+            }
             Act::Permanent => Err(DeliveryError::from_http_status(404, None).into()),
             Act::Misconfigured => Err(DeliveryError::from_http_status(401, None).into()),
             Act::Hang => std::future::pending().await,
+            Act::Panic => panic!("scripted sink panic"),
         }
     }
 
@@ -161,10 +170,11 @@ pub fn alert_keyed(severity: AlertSeverity, title: &str, key: &str) -> Alert {
     made
 }
 
-/// Alerting config with delivery bounds the tests care about; the rest keep their defaults.
+/// Alerting config with delivery bounds the tests care about; the rest keep their defaults, and
+/// the breaker threshold sits at its maximum so it trips only where a test asks for it.
 pub fn config(tweak: impl FnOnce(&mut AlertingConfig)) -> AlertingConfig {
     let mut config = AlertingConfig::default();
-    config.delivery.breaker_failure_threshold = 1_000;
+    config.delivery.breaker_failure_threshold = DeliveryConfig::BREAKER_FAILURE_THRESHOLD_MAX;
     tweak(&mut config);
     config
 }
@@ -229,7 +239,7 @@ impl AlertPublisher for CountingPublisher {
     async fn publish(&self, _alert: &Alert) -> Result<(), PublishError> {
         self.published.fetch_add(1, Ordering::SeqCst);
         if self.fail {
-            Err(PublishError("bus down".to_owned()))
+            Err(PublishError::new("bus down"))
         } else {
             Ok(())
         }

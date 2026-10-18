@@ -12,13 +12,18 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-/// Serialises an alert for the bus; the caller owns what it exposes.
-pub type Projection = fn(&Alert) -> Vec<u8>;
+/// Serialises an alert for the bus; the caller owns what it exposes. A failure is a publish
+/// failure, never an empty payload.
+pub type Projection = fn(&Alert) -> Result<Vec<u8>, PublishError>;
 
 /// The allowlist projection with no opt-in fields: what every bus subscriber may see.
-#[must_use]
-pub fn masked_projection(alert: &Alert) -> Vec<u8> {
-    serde_json::to_vec(&ExternalAlert::project(alert, IncludeFlags::default())).unwrap_or_default()
+///
+/// # Errors
+///
+/// [`PublishError`] when the projection does not serialise.
+pub fn masked_projection(alert: &Alert) -> Result<Vec<u8>, PublishError> {
+    serde_json::to_vec(&ExternalAlert::project(alert, IncludeFlags::default()))
+        .map_err(|error| PublishError::new(format!("alert projection: {error}")))
 }
 
 /// Publishes each stored alert's projection on [`alert::NEW`].
@@ -38,11 +43,11 @@ impl BrokerPublisher {
 #[async_trait]
 impl AlertPublisher for BrokerPublisher {
     async fn publish(&self, alert: &Alert) -> Result<(), PublishError> {
-        let payload = (self.project)(alert);
+        let payload = (self.project)(alert)?;
         self.broker
             .publish(alert::NEW, &alert.id.to_string(), payload)
             .await
-            .map_err(|error| PublishError(error.to_string()))
+            .map_err(|error| PublishError::new(error.to_string()))
     }
 }
 
@@ -120,7 +125,8 @@ mod tests {
             record,
             Completeness::complete(),
         );
-        let json: serde_json::Value = serde_json::from_slice(&masked_projection(&alert)).unwrap();
+        let payload = masked_projection(&alert).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert!(
             json.get("command_line").is_none(),
             "command line leaked onto the bus"
@@ -129,6 +135,6 @@ mod tests {
             json.get("rule_id").and_then(serde_json::Value::as_str),
             Some("rule-1")
         );
-        assert!(!String::from_utf8_lossy(&masked_projection(&alert)).contains("s3cr3t-sentinel"));
+        assert!(!String::from_utf8_lossy(&payload).contains("s3cr3t-sentinel"));
     }
 }

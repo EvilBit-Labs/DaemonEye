@@ -21,8 +21,8 @@ mod support;
 
 use daemoneye_lib::alerting::config::{SyslogSpec, SyslogTransport};
 use daemoneye_lib::alerting::{
-    AlertSink, AlertingError, DeliveryError, DeliveryErrorClass, ResolvedSink, SinkBuilder,
-    SinkSpec,
+    AlertSink, AlertingError, Credentials, DeliveryError, DeliveryErrorClass, ResolvedSink,
+    SinkBuilder, SinkSpec,
 };
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::process::ProcessRecord;
@@ -62,9 +62,7 @@ fn spec(transport: SyslogTransport, address: &str) -> SyslogSpec {
 fn resolved(spec: SyslogSpec) -> ResolvedSink {
     ResolvedSink {
         spec: SinkSpec::Syslog(spec),
-        token: None,
-        username: None,
-        password: None,
+        credentials: Credentials::None,
     }
 }
 
@@ -222,12 +220,25 @@ async fn severity_and_facility_map_to_priority() {
     let line = send_udp(|s| "local7".clone_into(&mut s.facility), &critical).await;
     assert_eq!(parse(&line).pri, 23 * 8 + 2);
 
-    let line = send_udp(|s| "no-such-facility".clone_into(&mut s.facility), &alert()).await;
-    assert_eq!(
-        parse(&line).pri,
-        27,
-        "unknown facility falls back to daemon"
-    );
+    let line = send_udp(|s| "LOCAL0".clone_into(&mut s.facility), &alert()).await;
+    assert_eq!(parse(&line).pri, 16 * 8 + 3, "names are case-insensitive");
+}
+
+/// A facility syslog does not define is a typo that would misroute every message: it refuses
+/// startup instead of falling back to `daemon`.
+#[tokio::test]
+async fn an_unknown_facility_refuses_to_build() {
+    let server = MockSyslog::udp().await;
+    for bad in ["no-such-facility", "local9", "loca1"] {
+        let mut typo = spec(SyslogTransport::Udp, &server.address);
+        bad.clone_into(&mut typo.facility);
+        let error = SyslogSink::new(&resolved(typo), &delivery())
+            .expect_err("unknown facility must refuse");
+        assert!(
+            matches!(error, AlertingError::ConfigurationError(ref m) if m.contains("facility")),
+            "{bad}: {error}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -275,6 +286,24 @@ async fn oversize_message_is_truncated_on_a_char_boundary_and_flagged() {
 
     let short = send_udp(|s| s.max_message_bytes = 1024, &alert()).await;
     assert_eq!(sd(&parse(&short), "truncated"), None);
+}
+
+/// The same sweep over a four-byte body: every cap lands inside a character at some offset.
+#[tokio::test]
+async fn oversize_four_byte_body_is_truncated_on_a_char_boundary() {
+    let long = alert_with("t", &"\u{1D11E}".repeat(700));
+    for cap in 1024..1028 {
+        let line = send_udp(|s| s.max_message_bytes = cap, &long).await;
+        assert!(line.len() <= cap, "{} bytes over cap {cap}", line.len());
+        assert!(
+            line.len() >= cap - 3,
+            "cap should be used, got {}",
+            line.len()
+        );
+        let parsed = parse(&line);
+        assert_eq!(sd(&parsed, "truncated"), Some("1"));
+        assert!(parsed.msg.ends_with('\u{1D11E}'), "cut inside a char");
+    }
 }
 
 #[tokio::test]
@@ -447,6 +476,38 @@ async fn tls_verifies_the_server_against_the_configured_ca() {
         "{error:?}"
     );
     assert!(server.messages().is_empty());
+}
+
+/// A `ca_file` for another authority does not trust the server: the file replaces the roots.
+#[tokio::test]
+async fn a_ca_file_for_another_authority_does_not_trust_the_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let serving = TestPki::generate();
+    let other = TestPki::generate();
+    let server = MockSyslog::tls(&serving).await;
+    let mut wrong_ca = spec(SyslogTransport::Tls, &server.address);
+    wrong_ca.ca_file = Some(other.write_ca(dir.path()));
+    let error = delivery_error(sink(wrong_ca).send(&alert()).await);
+    assert_eq!(error, DeliveryError::tls_verification());
+    assert!(server.messages().is_empty());
+}
+
+/// A TLS connection is reused across sends: the post-handshake records a TLS 1.3 server sends
+/// (session tickets) must not be mistaken for the peer closing the connection.
+#[tokio::test]
+async fn a_tls_connection_is_reused_across_sends() {
+    let dir = tempfile::tempdir().unwrap();
+    let pki = TestPki::generate();
+    let server = MockSyslog::tls(&pki).await;
+    let mut good = spec(SyslogTransport::Tls, &server.address);
+    good.ca_file = Some(pki.write_ca(dir.path()));
+    let sink = sink(good);
+    sink.send(&alert()).await.unwrap();
+    // Let the server's post-handshake records arrive before the next send looks at the socket.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    sink.send(&alert()).await.unwrap();
+    assert_eq!(server.wait_for(2).await.len(), 2);
+    assert_eq!(server.connections(), 1, "the second send reconnected");
 }
 
 #[cfg(unix)]

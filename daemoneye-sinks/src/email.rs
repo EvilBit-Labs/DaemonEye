@@ -1,18 +1,18 @@
 //! Email sink: one plain-text SMTP message per alert, always over TLS.
 
 use crate::ensure_crypto_provider;
-use crate::error::{HEALTH_TIMEOUT, is_certificate_error, tls_cause};
+use crate::error::{HEALTH_TIMEOUT, classify_tls, tls_cause};
 use async_trait::async_trait;
 use daemoneye_lib::alerting::config::{EmailSpec, EmailTls};
 use daemoneye_lib::alerting::{
-    AlertSink, AlertingError, DeliveryError, DeliveryErrorClass, DeliveryResult, ExternalAlert,
-    IncludeFlags, ResolvedSink, SinkSpec, sanitise_control,
+    AlertSink, AlertingError, Credentials, DeliveryError, DeliveryErrorClass, DeliveryResult,
+    ExternalAlert, IncludeFlags, ResolvedSink, SinkSpec, sanitise_control,
 };
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::Alert;
 use lettre::message::header::{HeaderName, HeaderValue};
 use lettre::message::{Mailbox, Message};
-use lettre::transport::smtp::authentication::{Credentials, Mechanism};
+use lettre::transport::smtp::authentication::{Credentials as SmtpCredentials, Mechanism};
 use lettre::transport::smtp::client::{Certificate, Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use secrecy::ExposeSecret;
@@ -125,13 +125,22 @@ impl EmailSink {
             .tls(tls)
             .timeout(Some(Duration::from_secs(delivery.attempt_timeout_secs)))
             .authentication(vec![Mechanism::Plain, Mechanism::Login]);
-        if let (Some(user), Some(pass)) = (resolved.username.as_ref(), resolved.password.as_ref()) {
-            // ponytail: lettre keeps these two Strings for the transport's life and does not
-            // zeroize them; the exposure is bounded to this process's heap.
-            builder = builder.credentials(Credentials::new(
-                user.expose_secret().to_owned(),
-                pass.expose_secret().to_owned(),
-            ));
+        match resolved.credentials {
+            Credentials::Basic {
+                ref username,
+                ref password,
+            } => {
+                // ponytail: lettre keeps these two Strings for the transport's life and does not
+                // zeroize them; the exposure is bounded to this process's heap.
+                builder = builder.credentials(SmtpCredentials::new(
+                    username.expose_secret().to_owned(),
+                    password.expose_secret().to_owned(),
+                ));
+            }
+            Credentials::None => {}
+            Credentials::Token(_) => {
+                return Err(config_error(name, "a token credential does not fit SMTP"));
+            }
         }
         Ok(Self {
             name: spec.name.clone(),
@@ -188,11 +197,7 @@ fn classify_smtp(error: &lettre::transport::smtp::Error) -> DeliveryError {
     }
     // lettre reports a rejected certificate as a connection error wrapping the rustls error.
     if let Some(cause) = tls_cause(error) {
-        return if is_certificate_error(cause) {
-            DeliveryError::tls_verification()
-        } else {
-            transient(DeliveryErrorClass::Tls)
-        };
+        return classify_tls(cause);
     }
     if error.is_tls() {
         return transient(DeliveryErrorClass::Tls);
@@ -266,9 +271,10 @@ mod tests {
                 include_command_line: false,
                 include_user: false,
             }),
-            token: None,
-            username: Some(SecretString::from("u".to_owned())),
-            password: Some(SecretString::from("p".to_owned())),
+            credentials: Credentials::Basic {
+                username: SecretString::from("u".to_owned()),
+                password: SecretString::from("p".to_owned()),
+            },
         }
     }
 

@@ -12,6 +12,7 @@
 //! stored on its own: it is the high half of the watermark the event store commits with the rows,
 //! so it can never drift from the data it protects.
 
+use daemoneye_lib::alerting::enrich::TAG_PARTIAL;
 use daemoneye_lib::alerting::{AlertManager, EnqueueOutcome, EnrichContext, enrich};
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::execution::completeness::{
@@ -312,7 +313,10 @@ pub async fn enrich_and_enqueue(
     .await
     .unwrap_or_else(|error| {
         warn!(%error, "alert enrichment task failed; enqueuing alerts unenriched");
-        alerts.to_vec()
+        alerts
+            .iter()
+            .map(|alert| alert.clone().with_tag(TAG_PARTIAL))
+            .collect()
     });
     let mut persisted = 0_usize;
     for alert in &enriched {
@@ -332,19 +336,34 @@ pub async fn enrich_and_enqueue(
 }
 
 /// Drop expired event buckets and prune terminal delivery rows older than `retention_ms`.
-/// Returns `(buckets_dropped, delivery_rows_pruned)`. Synchronous: call it from `spawn_blocking`.
+///
+/// Returns `(buckets_dropped, delivery_rows_pruned)`; pruned dead letters, which were never
+/// delivered, are logged at warn. Synchronous: call it from `spawn_blocking`.
 ///
 /// # Errors
 ///
-/// The first [`StorageError`] either step hits; the other step still runs first.
+/// Runs both steps; returns the bucket error if both fail (the prune error is logged),
+/// otherwise whichever failed.
 pub fn run_retention_sweep(
     store: &EventStore,
     now_ms: u64,
     retention_ms: u64,
 ) -> anyhow::Result<(usize, usize)> {
-    let buckets = store.drop_expired(now_ms);
-    let rows = store.prune_deliveries(now_ms, retention_ms);
-    Ok((buckets?, rows?))
+    let dropped = store.drop_expired(now_ms);
+    let pruned = store.prune_deliveries(now_ms, retention_ms);
+    if dropped.is_err()
+        && let Err(ref prune_error) = pruned
+    {
+        warn!(error = %prune_error, "delivery prune failed as well");
+    }
+    let report = pruned?;
+    if report.dead_letters > 0 {
+        warn!(
+            dead_letters = report.dead_letters,
+            "retention pruned dead-lettered delivery rows; those alerts were never delivered"
+        );
+    }
+    Ok((dropped?, report.rows))
 }
 
 /// Open the event store, turning a schema mismatch into an error that says how to recover.

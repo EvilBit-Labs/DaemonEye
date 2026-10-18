@@ -4,6 +4,7 @@
 
 use daemoneye_lib::alerting::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
+    parse_retry_after,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -58,11 +59,24 @@ fn delay_for_never_exceeds_cap() {
 
 #[test]
 fn retry_after_honours_delta_seconds_up_to_cap_and_ignores_other_forms() {
-    let policy = RetryPolicy::new(3, secs(1), secs(60));
-    assert_eq!(policy.retry_after("300"), Some(secs(60)));
-    assert_eq!(policy.retry_after("5"), Some(secs(5)));
-    assert_eq!(policy.retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
-    assert_eq!(policy.retry_after("18446744073709551616"), None);
+    assert_eq!(parse_retry_after("300", secs(60)), Some(secs(60)));
+    assert_eq!(parse_retry_after("5", secs(60)), Some(secs(5)));
+    assert_eq!(
+        parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT", secs(60)),
+        None
+    );
+    assert_eq!(parse_retry_after("18446744073709551616", secs(60)), None);
+}
+
+/// A base above the cap is capped and a zero attempt count means one attempt, so an unchecked
+/// construction cannot produce a policy that never sends or ignores its cap.
+#[test]
+fn new_caps_the_base_and_floors_the_attempt_count() {
+    let inverted = RetryPolicy::new(0, secs(90), secs(60));
+    assert_eq!(inverted.max_attempts(), 1);
+    assert_eq!(inverted.cap(), secs(60));
+    let mut rng = StdRng::seed_from_u64(3);
+    assert!((0..DRAWS).all(|_| inverted.delay_for(0, &mut rng) <= secs(60)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -113,6 +127,36 @@ async fn cooldown_admits_exactly_one_probe_and_success_closes() {
     assert_eq!(breaker.state(), BreakerState::Closed);
     assert!(breaker.closed_since().is_some());
     assert_eq!(breaker.permit(), Permit::Allow);
+}
+
+/// A permanent rejection answering the probe is an answer: the sink is up, so the breaker closes.
+#[tokio::test(start_paused = true)]
+async fn a_permanent_failure_while_half_open_closes_the_breaker() {
+    let mut breaker = CircuitBreaker::new(1, secs(30));
+    breaker.record_failure(&transient());
+    tokio::time::advance(secs(30)).await;
+    assert_eq!(breaker.permit(), Permit::AllowProbe);
+    breaker.record_failure(&permanent());
+    assert_eq!(breaker.state(), BreakerState::Closed);
+    assert_eq!(breaker.permit(), Permit::Allow);
+}
+
+/// A probe that never went out is abandoned: back to open for a full cool-down, never stuck
+/// half-open. Abandoning in any other state changes nothing.
+#[tokio::test(start_paused = true)]
+async fn an_abandoned_probe_reopens_the_breaker() {
+    let mut breaker = CircuitBreaker::new(1, secs(30));
+    breaker.abandon_probe();
+    assert_eq!(breaker.state(), BreakerState::Closed);
+    breaker.record_failure(&transient());
+    tokio::time::advance(secs(30)).await;
+    assert_eq!(breaker.permit(), Permit::AllowProbe);
+    breaker.abandon_probe();
+    assert_eq!(breaker.state(), BreakerState::Open);
+    tokio::time::advance(secs(29)).await;
+    assert_eq!(breaker.permit(), Permit::Deny);
+    tokio::time::advance(secs(1)).await;
+    assert_eq!(breaker.permit(), Permit::AllowProbe);
 }
 
 #[tokio::test(start_paused = true)]

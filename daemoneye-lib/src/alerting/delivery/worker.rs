@@ -1,15 +1,16 @@
-//! One worker per sink: claims rows, sends, writes the outcome back with compare-and-set.
+//! One worker per sink: loads the alert, claims the row, sends, writes the outcome back with
+//! compare-and-set.
 
 use super::bucket::TokenBucket;
 use super::{
     REDRIVE_BATCH, Shared, SinkRuntime, StoreCallError, WORKER_TICK, lock, millis, to_u64,
 };
+use crate::alerting::AlertingError;
 use crate::alerting::reliability::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
 };
-use crate::alerting::{AlertingError, DeliveryResult};
-use crate::models::{DeliveryReason, DeliveryRecord, DeliveryState, Uuid};
-use crate::storage::{Claimed, CompleteOutcome, RedriveReport};
+use crate::models::{Alert, DeliveryReason, DeliveryRecord, Uuid};
+use crate::storage::{CompleteOutcome, DeliveryExpectation, RedriveReport};
 use rand::rngs::StdRng;
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,17 +64,17 @@ impl SinkWorker {
         }
     }
 
-    /// Seeds the dead-letter depth from the store, then redrives every batch the open-row cap
-    /// admits, local sinks included. A local sink has no breaker, so this startup drain is its
-    /// only automatic redrive; a network sink continues when its breaker recovers.
+    /// Redrives every batch of dead letters the open-row cap admits, then loops: one pass over
+    /// the sink's rows, then sleep until a wake, the tick or cancellation. A local sink has no
+    /// breaker, so the startup backlog is its only automatic redrive; it keeps draining as open
+    /// rows free up. A network sink also redrives when its breaker recovers.
     pub(super) async fn run(mut self) {
         let runtime = Arc::clone(&self.runtime);
-        self.seed_dead_letter_depth().await;
         let mut report = self.redrive().await;
         while report.moved > 0 && report.remaining > 0 && !self.is_cancelled() {
             report = self.redrive().await;
         }
-        self.redrive_pending = report.remaining > 0 && !runtime.is_local;
+        self.redrive_pending = report.remaining > 0;
         while !self.is_cancelled() {
             let wait = self.pass().await;
             tokio::select! {
@@ -90,7 +91,7 @@ impl SinkWorker {
 
     /// One look at the sink's rows; returns how long to sleep before the next.
     async fn pass(&mut self) -> Duration {
-        self.redrive_when_recovered().await;
+        self.redrive_when_able().await;
         let Some(rows) = self.read_open().await else {
             return WORKER_TICK;
         };
@@ -118,7 +119,7 @@ impl SinkWorker {
             if !self.pace().await {
                 break;
             }
-            let flow = self.attempt(id, probe).await;
+            let flow = self.attempt(id, &row, probe).await;
             probed = probe;
             if flow == Flow::Stop || probe {
                 break;
@@ -139,8 +140,23 @@ impl SinkWorker {
             return Permit::Allow;
         }
         let permit = self.breaker.permit();
-        lock(&self.runtime.stats).breaker = self.breaker.state();
+        self.sync_breaker();
         permit
+    }
+
+    /// Mirror the breaker into the sink's stats, logging every transition.
+    fn sync_breaker(&self) {
+        let state = self.breaker.state();
+        let mut stats = lock(&self.runtime.stats);
+        if stats.breaker != state {
+            warn!(
+                sink = %self.runtime.name,
+                from = ?stats.breaker,
+                to = ?state,
+                "sink breaker changed state"
+            );
+            stats.breaker = state;
+        }
     }
 
     /// With no open row to probe on, the breaker would stay open and strand the dead letters;
@@ -154,17 +170,14 @@ impl SinkWorker {
             self.runtime.sink.health_check(),
         )
         .await;
-        let verdict = match checked {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(AlertingError::Delivery(error))) => Err(error),
-            Ok(Err(_other)) => Err(DeliveryError::transient(DeliveryErrorClass::Connect)),
-            Err(_elapsed) => Err(DeliveryError::transient(DeliveryErrorClass::Timeout)),
-        };
-        match verdict {
-            Ok(()) | Err(DeliveryError::Permanent { .. }) => self.breaker.record_success(),
-            Err(ref error) => self.breaker.record_failure(error),
+        match classify(checked) {
+            Ok(()) => self.breaker.record_success(),
+            Err(ref error) => {
+                lock(&self.runtime.stats).last_error = Some(error.class().clone());
+                self.breaker.record_failure(error);
+            }
         }
-        lock(&self.runtime.stats).breaker = self.breaker.state();
+        self.sync_breaker();
         true
     }
 
@@ -191,7 +204,14 @@ impl SinkWorker {
         {
             Ok(open) => {
                 let mut stats = lock(&self.runtime.stats);
-                stats.corrupt = to_u64(open.corrupt);
+                let corrupt = to_u64(open.corrupt);
+                if corrupt != stats.corrupt {
+                    warn!(sink = %self.runtime.name, corrupt, "undecodable delivery rows are being skipped");
+                }
+                stats.corrupt = corrupt;
+                // The store is the truth for the depth; the counters only keep it current
+                // between passes.
+                stats.dead_letters = to_u64(open.dead_letters);
                 let now = self.shared.clock.now_ms();
                 stats.oldest_pending_enqueue_ms = open
                     .rows
@@ -206,18 +226,6 @@ impl SinkWorker {
                 error!(sink = %self.runtime.name, %error, "reading open deliveries failed");
                 None
             }
-        }
-    }
-
-    async fn seed_dead_letter_depth(&self) {
-        let name = self.runtime.name.clone();
-        match self
-            .shared
-            .blocking(move |store| store.dead_letter_count(&name))
-            .await
-        {
-            Ok(depth) => lock(&self.runtime.stats).dead_letters = to_u64(depth),
-            Err(error) => error!(sink = %self.runtime.name, %error, "counting dead letters failed"),
         }
     }
 
@@ -245,50 +253,70 @@ impl SinkWorker {
         }
     }
 
-    /// Redrive once the breaker has stayed closed a full cool-down.
-    async fn redrive_when_recovered(&mut self) {
-        if !self.redrive_pending || self.runtime.is_local {
+    /// Redrive what is pending: a local sink as soon as open rows free up, a network sink once
+    /// its breaker has stayed closed a full cool-down.
+    async fn redrive_when_able(&mut self) {
+        if !self.redrive_pending {
             return;
         }
-        let Some(since) = self.breaker.closed_since() else {
-            return;
-        };
-        if since.elapsed() >= self.shared.settings.breaker_cooldown {
-            self.redrive_pending = self.redrive().await.remaining > 0;
+        if !self.runtime.is_local {
+            let Some(since) = self.breaker.closed_since() else {
+                return;
+            };
+            if since.elapsed() < self.shared.settings.breaker_cooldown {
+                return;
+            }
         }
+        self.redrive_pending = self.redrive().await.remaining > 0;
     }
 
-    async fn attempt(&mut self, id: Uuid, probe: bool) -> Flow {
+    /// Load the alert, claim the row, send. The load comes first so a store fault costs no
+    /// attempt.
+    async fn attempt(&mut self, id: Uuid, row: &DeliveryRecord, probe: bool) -> Flow {
         let name = self.runtime.name.clone();
-        let now = self.shared.clock.now_ms();
-        let claim_name = name.clone();
-        let claimed = match self
-            .shared
-            .blocking(move |store| store.claim(&claim_name, id, now))
-            .await
-        {
-            Ok(claimed) => claimed,
-            Err(error) => return self.unclaimed(probe, &error),
-        };
         let alert = match self
             .shared
             .blocking(move |store| store.get_alert(&id.to_string()))
             .await
         {
             Ok(Some(alert)) => alert,
-            Ok(None) => return self.alert_missing(id, claimed, probe).await,
+            Ok(None) => return self.alert_missing(id, row, probe).await,
             Err(error) => {
-                error!(sink = %name, %error, "loading the alert failed");
+                error!(sink = %name, alert_id = %id, %error, "loading the alert failed");
                 self.release_probe(probe);
                 return Flow::Stop;
             }
         };
+        let now = self.shared.clock.now_ms();
+        let claimed = match self
+            .shared
+            .blocking(move |store| store.claim(&name, id, now))
+            .await
+        {
+            Ok(claimed) => claimed,
+            Err(error) => return self.unclaimed(probe, &error),
+        };
+        self.send(id, claimed.expected, claimed.record, &alert)
+            .await
+    }
+
+    async fn send(
+        &mut self,
+        id: Uuid,
+        expected: DeliveryExpectation,
+        mut row: DeliveryRecord,
+        alert: &Alert,
+    ) -> Flow {
         let sent = tokio::time::timeout(
             self.shared.settings.attempt_timeout,
-            self.runtime.sink.send(&alert),
+            self.runtime.sink.send(alert),
         )
         .await;
-        self.settle(id, claimed, classify(sent)).await
+        let verdict = classify(sent);
+        let now = self.shared.clock.now_ms();
+        let is_dead = self.apply(&mut row, &verdict, now);
+        self.record_outcome(&verdict, now);
+        self.write_back(id, expected, row, is_dead).await
     }
 
     /// A claim that did not happen: stale rows are skipped, store failures stop the pass.
@@ -307,31 +335,17 @@ impl SinkWorker {
         if !probe {
             return;
         }
-        self.breaker
-            .record_failure(&DeliveryError::transient(DeliveryErrorClass::Timeout));
-        lock(&self.runtime.stats).breaker = self.breaker.state();
+        self.breaker.abandon_probe();
+        self.sync_breaker();
     }
 
-    async fn alert_missing(&mut self, id: Uuid, claimed: Claimed, probe: bool) -> Flow {
+    async fn alert_missing(&mut self, id: Uuid, row: &DeliveryRecord, probe: bool) -> Flow {
         self.release_probe(probe);
         let now = self.shared.clock.now_ms();
-        let mut row = claimed.record;
-        row.dead_letter(DeliveryReason::AlertMissing, now);
-        warn!(sink = %self.runtime.name, "alert row missing; dead-lettering its delivery");
-        self.write_back(id, claimed.expected, row, true).await
-    }
-
-    async fn settle(
-        &mut self,
-        id: Uuid,
-        claimed: Claimed,
-        verdict: Result<(), DeliveryError>,
-    ) -> Flow {
-        let now = self.shared.clock.now_ms();
-        let mut row = claimed.record;
-        let is_dead = self.apply(&mut row, &verdict, now);
-        self.record_outcome(&verdict, now);
-        self.write_back(id, claimed.expected, row, is_dead).await
+        let expected = (row.state, row.attempts, row.redrives);
+        let mut dead = row.clone();
+        dead.dead_letter(DeliveryReason::AlertMissing, now);
+        self.write_back(id, expected, dead, true).await
     }
 
     /// Fold the verdict into the row; `true` when the row is now dead-lettered.
@@ -343,9 +357,7 @@ impl SinkWorker {
     ) -> bool {
         let error = match *verdict {
             Ok(()) => {
-                row.state = DeliveryState::Delivered;
-                row.reason = None;
-                row.terminal_at_ms = Some(now);
+                row.deliver(now);
                 return false;
             }
             Err(ref error) => error,
@@ -357,7 +369,7 @@ impl SinkWorker {
                 row.dead_letter(DeliveryReason::Misconfigured, now);
             }
             DeliveryError::Transient { retry_after, .. } => {
-                if row.attempts >= self.policy.max_attempts {
+                if row.attempts >= self.policy.max_attempts() {
                     row.dead_letter(DeliveryReason::AttemptsExhausted, now);
                     return true;
                 }
@@ -366,9 +378,9 @@ impl SinkWorker {
                         self.policy
                             .delay_for(row.attempts.saturating_sub(1), &mut self.rng)
                     },
-                    |hint| hint.min(self.policy.cap),
+                    |hint| hint.min(self.policy.cap()),
                 );
-                row.next_attempt_ms = now.saturating_add(millis(delay));
+                row.retry_at(now.saturating_add(millis(delay)));
                 return false;
             }
         }
@@ -378,6 +390,11 @@ impl SinkWorker {
     /// Breaker and health bookkeeping for one finished send.
     fn record_outcome(&mut self, verdict: &Result<(), DeliveryError>, now: u64) {
         let is_local = self.runtime.is_local;
+        let failing_at = if is_local {
+            1
+        } else {
+            u64::from(self.shared.settings.breaker_threshold)
+        };
         let mut stats = lock(&self.runtime.stats);
         stats.record_attempt(verdict.is_ok());
         match *verdict {
@@ -387,35 +404,29 @@ impl SinkWorker {
                 }
                 stats.delivered = stats.delivered.saturating_add(1);
                 stats.consecutive_failures = 0;
+                stats.failing = false;
                 stats.last_success_ms = Some(now);
                 stats.misconfigured = false;
             }
             Err(ref error) => {
                 stats.consecutive_failures = stats.consecutive_failures.saturating_add(1);
+                stats.failing = stats.consecutive_failures >= failing_at;
                 stats.last_error = Some(error.class().clone());
                 if let DeliveryError::Misconfigured { .. } = *error {
                     stats.misconfigured = true;
                 }
                 if !is_local {
-                    // A permanent rejection is still an answer: it must not strand a probe.
-                    if matches!(*error, DeliveryError::Permanent { .. })
-                        && self.breaker.state() == BreakerState::HalfOpen
-                    {
-                        self.breaker.record_success();
-                    } else {
-                        self.breaker.record_failure(error);
-                    }
+                    self.breaker.record_failure(error);
                 }
             }
         }
-        stats.breaker = if is_local {
-            BreakerState::Closed
-        } else {
-            self.breaker.state()
-        };
-        // Dead letters are redriven only once a tripped breaker has recovered.
-        if stats.breaker == BreakerState::Open {
-            self.redrive_pending = true;
+        drop(stats);
+        if !is_local {
+            self.sync_breaker();
+            // Dead letters are redriven only once a tripped breaker has recovered.
+            if self.breaker.state() == BreakerState::Open {
+                self.redrive_pending = true;
+            }
         }
     }
 
@@ -423,27 +434,36 @@ impl SinkWorker {
     async fn write_back(
         &self,
         id: Uuid,
-        expected: crate::storage::DeliveryExpectation,
+        expected: DeliveryExpectation,
         row: DeliveryRecord,
         is_dead: bool,
     ) -> Flow {
         let name = self.runtime.name.clone();
+        let (reason, class, attempts) = (row.reason, row.last_error.clone(), row.attempts);
         let outcome = self
             .shared
             .blocking(move |store| store.complete(&name, id, expected, &row))
             .await;
         match outcome {
-            Ok(CompleteOutcome::Written) => {}
+            Ok(CompleteOutcome::Written) => lock(&self.shared.global).store_ok(),
             Ok(_stale) => {
-                debug!(sink = %self.runtime.name, "delivery row changed during the send; outcome dropped");
+                warn!(sink = %self.runtime.name, alert_id = %id, "delivery row changed during the send; outcome dropped");
                 return Flow::Continue;
             }
             Err(error) => {
-                error!(sink = %self.runtime.name, %error, "writing a delivery outcome failed");
+                error!(sink = %self.runtime.name, alert_id = %id, %error, "writing a delivery outcome failed");
                 return Flow::Stop;
             }
         }
         if is_dead {
+            warn!(
+                sink = %self.runtime.name,
+                alert_id = %id,
+                reason = ?reason,
+                class = ?class,
+                attempts,
+                "alert delivery dead-lettered"
+            );
             lock(&self.runtime.stats).dead_lettered();
             self.evict().await;
         }
@@ -458,7 +478,9 @@ impl SinkWorker {
             .blocking(move |store| store.evict_dead_letters(&name, keep))
             .await
         {
+            Ok(0) => {}
             Ok(removed) => {
+                warn!(sink = %self.runtime.name, removed, "dead letters evicted to hold the cap");
                 let mut stats = lock(&self.runtime.stats);
                 stats.evicted = stats.evicted.saturating_add(to_u64(removed));
                 stats.left_dead_letters(to_u64(removed));
@@ -473,20 +495,30 @@ const fn is_due(row: &DeliveryRecord, now: u64, max_backoff_ms: u64) -> bool {
     row.next_attempt_ms <= now || row.next_attempt_ms > now.saturating_add(max_backoff_ms)
 }
 
+/// The verdict of a timed send or health check. A sink steers retry, breaker and dead-letter
+/// handling by returning [`AlertingError::Delivery`]; the other variants are classified here.
 #[allow(
     clippy::wildcard_enum_match_arm,
     reason = "AlertingError is non_exhaustive; an unclassified failure is a transient io error"
 )]
-fn classify(
-    sent: Result<Result<DeliveryResult, AlertingError>, Elapsed>,
-) -> Result<(), DeliveryError> {
+fn classify<T>(sent: Result<Result<T, AlertingError>, Elapsed>) -> Result<(), DeliveryError> {
     let transient = DeliveryError::transient;
     match sent {
         Err(_elapsed) => Err(transient(DeliveryErrorClass::Timeout)),
         Ok(Ok(_delivered)) => Ok(()),
         Ok(Err(AlertingError::Delivery(error))) => Err(error),
         Ok(Err(AlertingError::Timeout(_))) => Err(transient(DeliveryErrorClass::Timeout)),
-        Ok(Err(_other)) => Err(transient(DeliveryErrorClass::Io)),
+        Ok(Err(AlertingError::IoError(error))) => Err(DeliveryError::from(error)),
+        Ok(Err(AlertingError::SerializationError(_))) => Err(DeliveryError::Permanent {
+            class: DeliveryErrorClass::Payload,
+        }),
+        Ok(Err(AlertingError::ConfigurationError(_))) => Err(DeliveryError::Misconfigured {
+            class: DeliveryErrorClass::Config,
+        }),
+        Ok(Err(other)) => {
+            warn!(error = %other, "unclassified sink error treated as a transient io failure");
+            Err(transient(DeliveryErrorClass::Io))
+        }
     }
 }
 

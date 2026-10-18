@@ -1,9 +1,10 @@
-//! `alert_deliveries` outbox operations (R9, R12, R13, R14, R16, R17, R25).
+//! `alert_deliveries` outbox operations.
 //!
-//! Every write-back is a compare-and-set on `(state, attempts, redrives)` so a worker holding an
-//! old read cannot overwrite a redrive or another worker's claim. Storage never reads the clock:
-//! callers pass `now_ms`. Rows are scanned per sink by key prefix; an undecodable row is counted
-//! and skipped, never fatal to its neighbours.
+//! A worker's write-back ([`complete`]) is a compare-and-set on `(state, attempts, redrives)`,
+//! so a worker holding an old read cannot overwrite a redrive or another worker's claim. The
+//! other mutations are read-modify-write inside one write transaction, serialised by redb's
+//! single writer. Storage never reads the clock: callers pass `now_ms`. Rows are scanned per
+//! sink by key prefix; an undecodable row is counted and skipped, never fatal to its neighbours.
 
 use crate::models::{Alert, AlertSeverity, DeliveryReason, DeliveryRecord, DeliveryState, Uuid};
 use crate::storage::codec::{VALUE_VERSION_V1, decode_value, encode_value};
@@ -15,7 +16,8 @@ use redb::{Database, ReadableDatabase, ReadableTable, Table};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// Exclusive upper bound of one sink's key prefix: the character after [`DELIVERY_KEY_SEP`].
+/// Exclusive upper bound of one sink's key prefix: the character after [`DELIVERY_KEY_SEP`]
+/// (U+001F), so the two move together.
 const DELIVERY_KEY_SEP_END: char = '\u{20}';
 
 /// `(state, attempts, redrives)` as the caller last read them.
@@ -34,13 +36,24 @@ pub enum EnqueueReport {
     },
 }
 
-/// Non-terminal rows of one sink.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Non-terminal rows of one sink, plus what the same scan learned about its dead letters.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OpenDeliveries {
     /// Decoded rows, oldest enqueue first.
     pub rows: Vec<(Uuid, DeliveryRecord)>,
     /// Rows that could not be decoded and were skipped.
     pub corrupt: usize,
+    /// Dead-lettered rows of the sink, counted from the peeked state alone.
+    pub dead_letters: usize,
+}
+
+/// What a retention sweep removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PruneReport {
+    /// Terminal rows removed, of every state.
+    pub rows: usize,
+    /// How many of `rows` were dead letters: alerts that were never delivered to that sink.
+    pub dead_letters: usize,
 }
 
 /// A row claimed for an attempt.
@@ -86,11 +99,13 @@ fn get_row<T: ReadableTable<&'static str, &'static [u8]>>(
     }
 }
 
+/// The worker reports undecodable rows once per change in their count; here the key is only
+/// worth a debug line, or every scan would repeat it.
 fn decode_scanned(key: &str, bytes: &[u8]) -> Option<DeliveryRecord> {
     match decode_value(bytes) {
         Ok(record) => Some(record),
         Err(error) => {
-            tracing::warn!(%key, %error, "undecodable alert_deliveries row");
+            tracing::debug!(%key, %error, "undecodable alert_deliveries row");
             None
         }
     }
@@ -133,7 +148,7 @@ fn scan_where<T: ReadableTable<&'static str, &'static [u8]>>(
         Some(state) if !keep(state) => {}
         Some(_) => out.push((key.to_owned(), decode_scanned(key, bytes))),
         None => {
-            tracing::warn!(%key, "undecodable alert_deliveries row");
+            tracing::debug!(%key, "undecodable alert_deliveries row");
             out.push((key.to_owned(), None));
         }
     };
@@ -214,7 +229,8 @@ fn new_record(alert: &Alert, now_ms: u64) -> DeliveryRecord {
     }
 }
 
-/// Dead-letter the oldest lowest-severity `Pending` row strictly below `incoming`, if any.
+/// Dead-letter the oldest lowest-severity `Pending` row strictly below `incoming`, if any. Only
+/// a High or Critical alert displaces; a `Retrying` row is never displaced.
 fn displace(
     rows: &mut Rows<'_>,
     existing: &[ScannedRow],
@@ -249,9 +265,7 @@ fn place(
     let mut record = new_record(alert, now_ms);
     let mut displaced = None;
     if let Some(survivor) = suppressed_by {
-        record.state = DeliveryState::SuppressedDuplicate;
-        record.suppressed_by = Some(survivor);
-        record.terminal_at_ms = Some(now_ms);
+        record.suppress(survivor, now_ms);
     } else {
         // Full decode only when the cap is reached and a victim must be chosen.
         if open_count(rows, sink)? >= max_open_rows {
@@ -325,16 +339,35 @@ fn read_rows(
 }
 
 pub(super) fn open_deliveries(db: &Database, sink: &str) -> Result<OpenDeliveries, StorageError> {
-    let mut rows = Vec::new();
-    let mut corrupt = 0_usize;
-    for (key, record) in read_rows(db, Some(sink), |state| !state.is_terminal())? {
-        match (alert_id_of(&key), record) {
-            (Some(id), Some(row)) => rows.push((id, row)),
-            _ => corrupt = corrupt.saturating_add(1),
+    let rtxn = db.begin_read()?;
+    let table = match rtxn.open_table(ALERT_DELIVERIES_TABLE) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(OpenDeliveries::default()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut open = OpenDeliveries::default();
+    let (start, end) = sink_range(sink);
+    for entry in table.range(start.as_str()..end.as_str())? {
+        let (raw_key, raw_value) = entry?;
+        let (key, bytes) = (raw_key.value(), raw_value.value());
+        match peek_state(bytes) {
+            Some(DeliveryState::DeadLettered) => {
+                open.dead_letters = open.dead_letters.saturating_add(1);
+            }
+            Some(state) if state.is_terminal() => {}
+            Some(_) => match (alert_id_of(key), decode_scanned(key, bytes)) {
+                (Some(id), Some(row)) => open.rows.push((id, row)),
+                _ => open.corrupt = open.corrupt.saturating_add(1),
+            },
+            None => {
+                tracing::debug!(%key, "undecodable alert_deliveries row");
+                open.corrupt = open.corrupt.saturating_add(1);
+            }
         }
     }
-    rows.sort_by_key(|entry| (entry.1.enqueued_at_ms, entry.0));
-    Ok(OpenDeliveries { rows, corrupt })
+    open.rows
+        .sort_by_key(|entry| (entry.1.enqueued_at_ms, entry.0));
+    Ok(open)
 }
 
 pub(super) fn dead_letters(
@@ -368,9 +401,7 @@ pub(super) fn claim(
         ) {
             return Err(stale());
         }
-        record.state = DeliveryState::Retrying;
-        record.attempts = record.attempts.saturating_add(1);
-        record.next_attempt_ms = now_ms;
+        record.claim(now_ms);
         put(&mut table, &key, &record)?;
         Claimed {
             expected: (record.state, record.attempts, record.redrives),
@@ -430,7 +461,9 @@ pub(super) fn redrive_batch(
         candidates.sort_by(|a, b| (a.1.terminal_at_ms, &a.0).cmp(&(b.1.terminal_at_ms, &b.0)));
         for (key, mut row) in candidates {
             if row.redrives >= max_redrives {
-                if row.reason != Some(DeliveryReason::RedrivesExhausted) {
+                // A cap of zero never redrives, so no row has spent a budget: its real reason
+                // stays.
+                if max_redrives > 0 && row.reason != Some(DeliveryReason::RedrivesExhausted) {
                     row.reason = Some(DeliveryReason::RedrivesExhausted);
                     put(&mut table, &key, &row)?;
                 }
@@ -440,12 +473,7 @@ pub(super) fn redrive_batch(
                 remaining = remaining.saturating_add(1);
                 continue;
             }
-            row.state = DeliveryState::Pending;
-            row.reason = None;
-            row.attempts = 0;
-            row.redrives = row.redrives.saturating_add(1);
-            row.next_attempt_ms = now_ms;
-            row.terminal_at_ms = None;
+            row.redrive(now_ms);
             put(&mut table, &key, &row)?;
             moved = moved.saturating_add(1);
         }
@@ -484,24 +512,28 @@ pub(super) fn prune_deliveries(
     db: &Database,
     now_ms: u64,
     retention_ms: u64,
-) -> Result<usize, StorageError> {
+) -> Result<PruneReport, StorageError> {
     let cutoff = now_ms.saturating_sub(retention_ms);
     let wtxn = db.begin_write()?;
-    let mut removed = 0_usize;
+    let mut report = PruneReport::default();
     {
         let mut table = wtxn.open_table(ALERT_DELIVERIES_TABLE)?;
         for (key, record) in scan_where(&table, None, DeliveryState::is_terminal)? {
-            let expired = record.is_some_and(|row| {
-                row.state.is_terminal() && row.terminal_at_ms.is_some_and(|at| at < cutoff)
-            });
-            if expired {
-                table.remove(key.as_str())?;
-                removed = removed.saturating_add(1);
+            let Some(row) = record else {
+                continue;
+            };
+            if !row.state.is_terminal() || row.terminal_at_ms.is_none_or(|at| at >= cutoff) {
+                continue;
+            }
+            table.remove(key.as_str())?;
+            report.rows = report.rows.saturating_add(1);
+            if row.state == DeliveryState::DeadLettered {
+                report.dead_letters = report.dead_letters.saturating_add(1);
             }
         }
     }
     wtxn.commit()?;
-    Ok(removed)
+    Ok(report)
 }
 
 pub(super) fn seed_dedup_window(

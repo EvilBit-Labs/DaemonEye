@@ -18,8 +18,8 @@ mod support;
 
 use daemoneye_lib::alerting::config::{EmailSpec, EmailTls};
 use daemoneye_lib::alerting::{
-    AlertSink, AlertingError, DeliveryError, DeliveryErrorClass, ResolvedSink, SinkBuilder,
-    SinkSpec,
+    AlertSink, AlertingError, Credentials, DeliveryError, DeliveryErrorClass, ResolvedSink,
+    SinkBuilder, SinkSpec,
 };
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::process::ProcessRecord;
@@ -58,9 +58,10 @@ fn spec(port: u16, tls: EmailTls) -> EmailSpec {
 fn resolved(spec: EmailSpec) -> ResolvedSink {
     ResolvedSink {
         spec: SinkSpec::Email(spec),
-        token: None,
-        username: Some(SecretString::from(USER.to_owned())),
-        password: Some(SecretString::from(PASSWORD.to_owned())),
+        credentials: Credentials::Basic {
+            username: SecretString::from(USER.to_owned()),
+            password: SecretString::from(PASSWORD.to_owned()),
+        },
     }
 }
 

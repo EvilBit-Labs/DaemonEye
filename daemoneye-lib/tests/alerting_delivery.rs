@@ -19,8 +19,9 @@
 mod fixtures;
 
 use daemoneye_lib::alerting::{
-    AlertSinkFactory, BreakerState, CredentialResolver, DeliveryAggregate, DeliveryErrorClass,
-    EnqueueOutcome, REDRIVE_BATCH, SinkBuilder,
+    AlertManager, AlertSinkFactory, AlertingError, BreakerState, CredentialResolver,
+    DeliveryAggregate, DeliveryErrorClass, EnqueueOutcome, NoopPublisher, REDRIVE_BATCH,
+    SinkBuilder,
 };
 use daemoneye_lib::config::{AlertSinkConfig, AlertingConfig, DeliveryConfig};
 use daemoneye_lib::models::{AlertSeverity, DeliveryReason, DeliveryState, Uuid};
@@ -34,6 +35,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const HIGH: AlertSeverity = AlertSeverity::High;
+const LOW: AlertSeverity = AlertSeverity::Low;
+const ALERTS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("alerts");
+const WRONG_ALERTS: redb::TableDefinition<u64, u64> = redb::TableDefinition::new("alerts");
+
+/// Replace the `alerts` table with one of the wrong type (`broken`), or put it back, under a
+/// running store.
+fn swap_alerts_table(store: &EventStore, broken: bool) {
+    let write = store.database().begin_write().unwrap();
+    if broken {
+        write.delete_table(ALERTS).unwrap();
+        write.open_table(WRONG_ALERTS).unwrap();
+    } else {
+        write.delete_table(WRONG_ALERTS).unwrap();
+        write.open_table(ALERTS).unwrap();
+    }
+    write.commit().unwrap();
+}
 
 // ---- retry, breaker, classification -------------------------------------------------------
 
@@ -178,6 +196,163 @@ async fn a_misconfigured_outcome_opens_the_breaker_at_once() {
     assert!(health.sinks[0].misconfigured);
     assert_eq!(health.aggregate, DeliveryAggregate::Degraded);
     assert_eq!(net.attempts(), 1);
+}
+
+/// A network sink refusing every alert is failing: the aggregate degrades even though permanent
+/// rejections never trip the breaker, and one success clears it.
+#[tokio::test(start_paused = true)]
+async fn a_run_of_permanent_rejections_degrades_a_network_sink() {
+    let net = Fake::new("net", false, Act::Permanent);
+    let r = rig(
+        vec![net.boxed()],
+        config(|c| c.delivery.breaker_failure_threshold = 2),
+    )
+    .await;
+    let (a, b, c) = (alert(HIGH, "a"), alert(HIGH, "b"), alert(HIGH, "c"));
+    r.manager.enqueue(&a).await;
+    settle().await;
+    let one = r.manager.health();
+    assert!(!one.sinks[0].failing, "one refusal is below the threshold");
+    assert_eq!(one.aggregate, DeliveryAggregate::Healthy);
+
+    r.manager.enqueue(&b).await;
+    settle().await;
+    let two = r.manager.health();
+    assert!(two.sinks[0].failing);
+    assert!(two.sinks[0].is_unhealthy());
+    assert_eq!(two.sinks[0].breaker, BreakerState::Closed);
+    assert_eq!(two.aggregate, DeliveryAggregate::Degraded);
+
+    net.set_default(Act::Ok);
+    r.manager.enqueue(&c).await;
+    settle().await;
+    let three = r.manager.health();
+    assert!(!three.sinks[0].failing);
+    assert_eq!(three.aggregate, DeliveryAggregate::Healthy);
+}
+
+/// A permanent rejection answering a probe proves the sink is up: the breaker closes and the
+/// next row is attempted at once.
+#[tokio::test(start_paused = true)]
+async fn a_permanent_answer_to_a_probe_closes_the_breaker() {
+    let net = Fake::new("net", false, Act::Ok);
+    net.script(&[Act::Transient, Act::Transient, Act::Permanent]);
+    let r = rig(
+        vec![net.boxed()],
+        config(|c| {
+            c.delivery.max_attempts = 1;
+            c.delivery.breaker_failure_threshold = 2;
+            c.delivery.breaker_cooldown_secs = 30;
+        }),
+    )
+    .await;
+    let alerts: Vec<_> = (0..4).map(|i| alert(HIGH, &format!("p{i}"))).collect();
+    for x in &alerts {
+        r.manager.enqueue(x).await;
+        settle().await;
+    }
+    let (probe_row, held_row) = (&alerts[2], &alerts[3]);
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Open);
+    assert_eq!(
+        row(&r.store, "net", held_row.id).state,
+        DeliveryState::Pending
+    );
+
+    run_for(36).await;
+
+    let probed = row(&r.store, "net", probe_row.id);
+    assert_eq!(
+        (probed.state, probed.reason),
+        (DeliveryState::DeadLettered, Some(DeliveryReason::Permanent))
+    );
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Closed);
+    assert_eq!(
+        row(&r.store, "net", held_row.id).state,
+        DeliveryState::Delivered
+    );
+    assert_eq!(net.attempts(), 4);
+}
+
+/// The worker honours a `Retry-After` hint, and caps one above `max_backoff_secs`.
+#[tokio::test(start_paused = true)]
+async fn a_retry_after_hint_sets_the_next_attempt_up_to_the_cap() {
+    let net = Fake::new("net", false, Act::Ok);
+    net.script(&[Act::TransientRetryAfter(7), Act::TransientRetryAfter(600)]);
+    let r = rig(
+        vec![net.boxed()],
+        config(|c| {
+            c.delivery.max_attempts = 3;
+            c.delivery.max_backoff_secs = 60;
+        }),
+    )
+    .await;
+    let a = alert(HIGH, "a");
+    r.manager.enqueue(&a).await;
+    settle().await;
+    assert_eq!(net.attempts(), 1);
+
+    run_for(6).await;
+    assert_eq!(net.attempts(), 1, "waits the hinted 7 s");
+    run_for(2).await;
+    assert_eq!(net.attempts(), 2);
+    run_for(58).await;
+    assert_eq!(net.attempts(), 2, "a hint above the cap waits the cap");
+    run_for(3).await;
+    assert_eq!(net.attempts(), 3);
+    assert_eq!(row(&r.store, "net", a.id).state, DeliveryState::Delivered);
+}
+
+/// A send that panics takes its worker down; the supervisor restarts it after a tick and the
+/// claimed row is retried.
+#[tokio::test(start_paused = true)]
+async fn a_panicking_send_restarts_the_worker_and_the_row_is_retried() {
+    let net = Fake::new("net", false, Act::Ok);
+    net.script(&[Act::Panic]);
+    let r = rig(vec![net.boxed()], config(|_| {})).await;
+    let a = alert(HIGH, "a");
+    r.manager.enqueue(&a).await;
+    settle().await;
+    assert_eq!(net.attempts(), 1);
+    let claimed = row(&r.store, "net", a.id);
+    assert_eq!(
+        (claimed.state, claimed.attempts),
+        (DeliveryState::Retrying, 1)
+    );
+
+    run_for(6).await;
+
+    let done = row(&r.store, "net", a.id);
+    assert_eq!((done.state, done.attempts), (DeliveryState::Delivered, 2));
+    assert_eq!(net.attempts(), 2);
+}
+
+/// A delivery setting out of range refuses `start`, as the loader would have.
+#[tokio::test]
+async fn start_refuses_a_delivery_setting_out_of_range() {
+    let (_dir, store) = temp_store();
+    let (_cancel, cancel_rx) = tokio::sync::watch::channel(false);
+    let mut alerting = AlertingConfig::default();
+    alerting.delivery.max_open_rows_per_sink = 0;
+
+    let error = AlertManager::start(
+        store,
+        vec![Fake::new("net", false, Act::Ok).boxed()],
+        &alerting,
+        Arc::new(NoopPublisher),
+        cancel_rx,
+    )
+    .await
+    .err()
+    .expect("zero open rows would dead-letter every alert");
+
+    assert!(
+        matches!(error, AlertingError::ConfigurationError(_)),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("max_open_rows_per_sink"),
+        "{error}"
+    );
 }
 
 /// A permanent rejection dead-letters without counting toward the breaker; a local sink is never
@@ -377,43 +552,77 @@ async fn the_window_is_seeded_from_recent_delivered_history_only() {
     );
 }
 
-/// A store that cannot take the write: the alert is not persisted, not announced, and its key
-/// does not enter the window.
+/// ADR-0015: a store that cannot take the write leaves the alert unpersisted and unannounced,
+/// and its key out of the window, so the same key is enqueued once the store takes writes again.
 #[tokio::test(start_paused = true)]
 async fn a_failed_enqueue_is_not_persisted_and_does_not_hold_the_window() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("events.redb");
-    drop(EventStore::new(&path).unwrap());
-    {
-        let db = redb::Database::open(&path).unwrap();
-        let write = db.begin_write().unwrap();
-        let real: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("alerts");
-        write.delete_table(real).unwrap();
-        let wrong: redb::TableDefinition<u64, u64> = redb::TableDefinition::new("alerts");
-        write.open_table(wrong).unwrap();
-        write.commit().unwrap();
-    }
-    let store = Arc::new(EventStore::open(&path).unwrap());
+    let (_dir, store) = temp_store();
     let net = Fake::new("net", false, Act::Ok);
     let bus = CountingPublisher::new(false);
     let r = rig_publishing(store, vec![net.boxed()], config(|_| {}), bus.clone()).await;
+    swap_alerts_table(&r.store, true);
 
     let first = alert_keyed(HIGH, "k", "K");
     assert_eq!(
         r.manager.enqueue(&first).await,
         EnqueueOutcome::NotPersisted
     );
-    let again = alert_keyed(HIGH, "k", "K");
-    assert_eq!(
-        r.manager.enqueue(&again).await,
-        EnqueueOutcome::NotPersisted
-    );
-
     let health = r.manager.health();
-    assert_eq!(health.store_failures, 2);
+    assert_eq!(health.store_failures, 1);
     assert_eq!(health.aggregate, DeliveryAggregate::Unhealthy);
     assert_eq!(bus.count(), 0);
     assert_eq!(net.attempts(), 0);
+
+    swap_alerts_table(&r.store, false);
+    let again = alert_keyed(HIGH, "k", "K");
+    assert_eq!(
+        r.manager.enqueue(&again).await,
+        EnqueueOutcome::Enqueued,
+        "the failed enqueue must not have recorded the window"
+    );
+    settle().await;
+
+    assert_eq!(
+        row(&r.store, "net", again.id).state,
+        DeliveryState::Delivered
+    );
+    assert_eq!(r.manager.health().aggregate, DeliveryAggregate::Healthy);
+    assert_eq!(bus.count(), 1);
+}
+
+/// A flood past the publish queue drops announcements, counted, and never an alert.
+#[tokio::test(start_paused = true)]
+async fn a_full_publish_queue_drops_announcements_and_never_the_alert() {
+    const FLOOD: usize = 300;
+    const QUEUE: usize = 256;
+    let (_dir, store) = temp_store();
+    let net = Fake::new("net", false, Act::Ok);
+    let r = rig_publishing(
+        store,
+        vec![net.boxed()],
+        config(|_| {}),
+        Arc::new(StuckPublisher),
+    )
+    .await;
+    let alerts: Vec<_> = (0..FLOOD).map(|i| alert(HIGH, &format!("a{i}"))).collect();
+    for a in &alerts {
+        let outcome = tokio::time::timeout(Duration::from_secs(5), r.manager.enqueue(a))
+            .await
+            .expect("enqueue waited on the publisher");
+        assert_eq!(outcome, EnqueueOutcome::Enqueued);
+    }
+    run_for(5).await;
+
+    for a in &alerts {
+        assert_eq!(row(&r.store, "net", a.id).state, DeliveryState::Delivered);
+    }
+    let dropped = r.manager.health().publish_failures;
+    // The stuck publisher holds one announcement outside the queue.
+    let at_least = u64::try_from(FLOOD - QUEUE - 1).unwrap();
+    assert!(
+        dropped >= at_least && dropped < u64::try_from(FLOOD).unwrap(),
+        "{dropped} dropped"
+    );
 }
 
 /// A publisher failure is counted and never fails the delivery.
@@ -782,6 +991,37 @@ async fn eviction_keeps_the_cap_drops_low_severity_and_spares_open_rows() {
     }
 }
 
+/// The enqueue path trims the dead letters it creates: a flood of Low alerts past a full
+/// queue keeps exactly `dlq_max_rows_per_sink` dead letters, and health counts the rest.
+#[tokio::test(start_paused = true)]
+async fn enqueue_path_eviction_holds_the_dead_letter_cap() {
+    let dead = Fake::new("dead", false, Act::Hang);
+    let r = rig(
+        vec![dead.boxed()],
+        config(|c| {
+            c.delivery.max_open_rows_per_sink = 1;
+            c.delivery.dlq_max_rows_per_sink = 1;
+            c.delivery.attempt_timeout_secs = 120;
+        }),
+    )
+    .await;
+    r.manager.enqueue(&alert(LOW, "l0")).await;
+    settle().await;
+    for i in 1..=5 {
+        assert_eq!(
+            r.manager.enqueue(&alert(LOW, &format!("l{i}"))).await,
+            EnqueueOutcome::Enqueued
+        );
+    }
+
+    assert_eq!(r.store.dead_letter_count("dead").unwrap(), 1);
+    let health = &r.manager.health().sinks[0];
+    assert_eq!(
+        (health.queue_full, health.evicted, health.dead_letters),
+        (5, 4, 1)
+    );
+}
+
 /// A far-future `next_attempt_ms` is clamped to the backoff cap; a near one is honoured.
 #[tokio::test(start_paused = true)]
 async fn a_retry_scheduled_beyond_the_cap_is_claimed_at_once() {
@@ -880,9 +1120,10 @@ async fn a_flapping_sink_sees_at_most_one_redrive_batch() {
     run_for(60).await;
 
     assert_eq!(redriven(&r.store, &ids), REDRIVE_BATCH);
+    let reattempted = net.attempts() - before;
     assert!(
-        net.attempts() - before <= REDRIVE_BATCH,
-        "only the batch was re-attempted"
+        (1..=REDRIVE_BATCH).contains(&reattempted),
+        "only the batch was re-attempted, and some of it was: {reattempted}"
     );
     assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Open);
 }
@@ -1069,7 +1310,8 @@ fn the_factory_builds_local_sinks_and_needs_a_builder_for_network_ones() {
 }
 
 /// A probe whose alert cannot be loaded must not leave the breaker half-open forever: the
-/// breaker reopens, and the next cool-down probes again.
+/// breaker reopens, the row costs no attempt (the load comes before the claim), and the next
+/// cool-down probes again.
 #[tokio::test(start_paused = true)]
 async fn a_probe_that_cannot_load_its_alert_reopens_the_breaker() {
     let dir = tempfile::tempdir().unwrap();
@@ -1126,21 +1368,23 @@ async fn a_probe_that_cannot_load_its_alert_reopens_the_breaker() {
     let probed = row(&r.store, "net", unloadable.id);
     assert_eq!(
         (probed.state, probed.attempts),
-        (DeliveryState::Retrying, 1),
-        "the probe claimed the unloadable row once"
+        (DeliveryState::Pending, 0),
+        "a load that fails costs the row no attempt"
     );
     assert_eq!(
         r.manager.health().sinks[0].breaker,
         BreakerState::Open,
         "a probe that sent nothing reopens the breaker"
     );
+    assert_eq!(r.manager.health().store_failures, 1);
 
     run_for(36).await;
     assert_eq!(
-        row(&r.store, "net", unloadable.id).attempts,
+        r.manager.health().store_failures,
         2,
         "the next cool-down probes again"
     );
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Open);
     assert_eq!(net.attempts(), 1, "the sink only ever saw the tripwire");
 }
 

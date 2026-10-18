@@ -1,15 +1,12 @@
-//! Multi-channel alert delivery system.
+//! Alert delivery: the [`AlertSink`](crate::alerting::AlertSink) contract, the local sinks
+//! (stdout, file) and the [`AlertManager`](crate::alerting::AlertManager) that stores every
+//! alert first and delivers it from the stored row with retry, a per-sink circuit breaker, a
+//! dead-letter queue and a deduplication window.
 //!
-//! This module provides a flexible alert delivery system with support for multiple
-//! output channels including stdout, files, webhooks, syslog, and email.
-//!
-//! Features:
-//! - Factory pattern for creating alert sinks
-//! - Comprehensive error handling with specific error types
-//! - Concurrent alert delivery with proper error isolation
-//! - Durable outbox delivery with retry, circuit breaking and dead-lettering
-//! - Deduplication window and paced delivery
-//! - Health monitoring for all sinks
+//! The network sinks (webhook, syslog, email) live in the `daemoneye-sinks` crate, the only
+//! workspace member that links TLS; they plug in through
+//! [`SinkBuilder`](crate::alerting::SinkBuilder). The design is
+//! ADR-0015 and the operator view is `docs/src/technical/alert-delivery.md`.
 
 pub mod config;
 mod delivery;
@@ -19,7 +16,7 @@ mod health;
 pub mod reliability;
 mod render;
 
-pub use config::{CredentialResolver, ResolvedSink, SinkSpec, host_of};
+pub use config::{CredentialResolver, Credentials, ResolvedSink, SinkSpec, host_of};
 pub use delivery::{
     AlertManager, AlertPublisher, EnqueueOutcome, NoopPublisher, PublishError, REDRIVE_BATCH,
     SHUTDOWN_DRAIN,
@@ -29,13 +26,13 @@ pub use factory::{AlertSinkFactory, SinkBuilder};
 pub use health::{DeliveryAggregate, DeliveryHealth, SinkHealthSnapshot};
 pub use reliability::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
+    parse_retry_after,
 };
 pub use render::{ExternalAlert, IncludeFlags, sanitise_control};
 
 use crate::models::{Alert, Completeness};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::Write;
 use thiserror::Error;
 
@@ -104,21 +101,29 @@ impl DeliveryResult {
         Self {
             sink_name: sink_name.to_owned(),
             delivered_at: chrono::Utc::now(),
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            duration_ms: delivery::millis(started.elapsed()),
         }
     }
 }
 
-/// Alert sink trait for different delivery mechanisms.
+/// One delivery channel, driven by its own worker.
+///
+/// A sink steers retry, breaker and dead-letter handling by returning
+/// [`AlertingError::Delivery`] with the right [`DeliveryError`]. An [`AlertingError::IoError`]
+/// is classified by its kind, a serialization error is permanent, a configuration error marks
+/// the sink misconfigured, and anything else is retried as a transient I/O failure. The worker
+/// wraps `send` in the attempt timeout, so it must be cancel-safe: a dropped send may not leave
+/// a half-written frame on a connection that is reused.
 #[async_trait]
 pub trait AlertSink: Send + Sync {
-    /// Send an alert through this sink.
+    /// Send an alert through this sink; `Ok` means the sink accepted it.
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError>;
 
-    /// Get the sink name.
+    /// The sink's unique name.
     fn name(&self) -> &str;
 
-    /// Check if the sink is healthy.
+    /// Probe the sink without sending an alert; the worker uses it to close a breaker that has
+    /// nothing to probe on, and bounds it with the attempt timeout.
     async fn health_check(&self) -> Result<(), AlertingError>;
 
     /// Whether the sink stays on the host. Local sinks never trip a circuit breaker and receive
@@ -156,6 +161,7 @@ impl AlertSink for StdoutSink {
     /// - `Csv`: a single-line CSV with `id,severity,detection_rule_id,title,description`.
     ///
     /// Returns a `DeliveryResult` containing the sink name, the delivery timestamp, and the elapsed duration in milliseconds.
+    /// A write error (a closed pipe, say) is an [`AlertingError::IoError`], never a panic.
     ///
     /// # Examples
     ///
@@ -176,13 +182,15 @@ impl AlertSink for StdoutSink {
     /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
     /// assert_eq!(res.sink_name, "stdout-test");
     /// ```
-    #[allow(clippy::print_stdout)] // Intentional stdout output for StdoutSink
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
         let output = render_alert(&self.format, alert)?;
 
-        println!("{output}");
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{output}")?;
+        stdout.flush()?;
+        drop(stdout);
 
         Ok(DeliveryResult::since(&self.name, start_time))
     }
@@ -330,38 +338,6 @@ impl std::fmt::Display for OutputFormat {
             Self::Json => write!(f, "json"),
             Self::Human => write!(f, "human"),
             Self::Csv => write!(f, "csv"),
-        }
-    }
-}
-
-/// Health summary for all alert sinks.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HealthSummary {
-    /// Total number of sinks
-    pub total_sinks: usize,
-    /// Number of healthy sinks
-    pub healthy_sinks: usize,
-    /// Number of unhealthy sinks
-    pub unhealthy_sinks: usize,
-    /// Detailed health results for each sink (errors as strings for serialization)
-    pub details: HashMap<String, String>,
-}
-
-impl HealthSummary {
-    /// Check if all sinks are healthy.
-    pub const fn is_all_healthy(&self) -> bool {
-        self.unhealthy_sinks == 0
-    }
-
-    /// Get the health percentage.
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn health_percentage(&self) -> f64 {
-        if self.total_sinks == 0 {
-            100.0
-        } else {
-            let healthy = f64::from(u32::try_from(self.healthy_sinks).unwrap_or(0));
-            let total = f64::from(u32::try_from(self.total_sinks).unwrap_or(1).max(1));
-            (healthy / total) * 100.0
         }
     }
 }
@@ -516,48 +492,6 @@ mod tests {
             OutputFormat::Csv
         );
         assert!("invalid".parse::<OutputFormat>().is_err());
-    }
-
-    #[test]
-    fn test_health_summary_creation() {
-        let summary = HealthSummary {
-            total_sinks: 5,
-            healthy_sinks: 4,
-            unhealthy_sinks: 1,
-            details: std::collections::HashMap::new(),
-        };
-
-        assert_eq!(summary.total_sinks, 5);
-        assert_eq!(summary.healthy_sinks, 4);
-        assert_eq!(summary.unhealthy_sinks, 1);
-        assert!(!summary.is_all_healthy());
-        assert_eq!(summary.health_percentage(), 80.0);
-    }
-
-    #[test]
-    fn test_health_summary_all_healthy() {
-        let summary = HealthSummary {
-            total_sinks: 3,
-            healthy_sinks: 3,
-            unhealthy_sinks: 0,
-            details: std::collections::HashMap::new(),
-        };
-
-        assert!(summary.is_all_healthy());
-        assert_eq!(summary.health_percentage(), 100.0);
-    }
-
-    #[test]
-    fn test_health_summary_no_sinks() {
-        let summary = HealthSummary {
-            total_sinks: 0,
-            healthy_sinks: 0,
-            unhealthy_sinks: 0,
-            details: std::collections::HashMap::new(),
-        };
-
-        assert!(summary.is_all_healthy());
-        assert_eq!(summary.health_percentage(), 100.0);
     }
 
     #[test]

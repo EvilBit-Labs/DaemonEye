@@ -228,6 +228,73 @@ fn critical_displaces_oldest_lowest_severity_pending_at_the_cap() {
     assert_eq!(state_of(&store, "t", l3.id).state, DeliveryState::Pending);
 }
 
+/// The displacement boundary: only High and Critical displace, only a strictly lower-severity
+/// `Pending` row is a victim, the lowest severity goes first, and a `Retrying` row is never
+/// displaced.
+#[test]
+fn displacement_edges_medium_never_displaces_and_retrying_rows_are_spared() {
+    let (_dir, _path, store) = open();
+    let low = alert(AlertSeverity::Low, "low");
+    let medium = alert(AlertSeverity::Medium, "medium");
+    store.enqueue_alert(&medium, &["s"], None, 2, 100).unwrap();
+    store.enqueue_alert(&low, &["s"], None, 2, 200).unwrap();
+
+    let another_medium = alert(AlertSeverity::Medium, "m2");
+    store
+        .enqueue_alert(&another_medium, &["s"], None, 2, 300)
+        .unwrap();
+    assert_eq!(
+        state_of(&store, "s", another_medium.id).reason,
+        Some(DeliveryReason::QueueFull),
+        "Medium does not displace"
+    );
+    assert_eq!(state_of(&store, "s", low.id).state, DeliveryState::Pending);
+
+    let high = alert(AlertSeverity::High, "high");
+    let report = store.enqueue_alert(&high, &["s"], None, 2, 400).unwrap();
+    assert_eq!(
+        report,
+        EnqueueReport::Enqueued {
+            rows: vec![("s".to_owned(), DeliveryState::Pending, Some(low.id))]
+        },
+        "High displaces the Low row before the older Medium one"
+    );
+    assert_eq!(
+        state_of(&store, "s", medium.id).state,
+        DeliveryState::Pending
+    );
+
+    store.claim("s", medium.id, 450).unwrap();
+    let critical = alert(AlertSeverity::Critical, "critical");
+    let placed = store
+        .enqueue_alert(&critical, &["s"], None, 2, 500)
+        .unwrap();
+    assert_eq!(
+        placed,
+        EnqueueReport::Enqueued {
+            rows: vec![("s".to_owned(), DeliveryState::Pending, Some(high.id))]
+        },
+        "the lower-severity row is Retrying, so the Pending High row goes instead"
+    );
+    assert_eq!(
+        state_of(&store, "s", medium.id).state,
+        DeliveryState::Retrying
+    );
+
+    store.claim("s", critical.id, 550).unwrap();
+    let another_critical = alert(AlertSeverity::Critical, "c2");
+    let refused = store
+        .enqueue_alert(&another_critical, &["s"], None, 2, 600)
+        .unwrap();
+    assert_eq!(
+        refused,
+        EnqueueReport::Enqueued {
+            rows: vec![("s".to_owned(), DeliveryState::DeadLettered, None)]
+        },
+        "with every open row Retrying there is no victim, so even a Critical row is refused"
+    );
+}
+
 #[test]
 fn high_never_displaces_an_equal_or_higher_severity_pending_row() {
     let (_dir, _path, store) = open();
@@ -479,7 +546,7 @@ fn prune_removes_old_terminal_rows_only_and_leaves_alerts() {
 
     let pruned = store.prune_deliveries(1_000, 500).unwrap();
 
-    assert_eq!(pruned, 1);
+    assert_eq!((pruned.rows, pruned.dead_letters), (1, 0));
     assert!(store.get_delivery("s", old.id).unwrap().is_none());
     assert!(store.get_delivery("s", recent.id).unwrap().is_some());
     assert_eq!(
@@ -487,6 +554,44 @@ fn prune_removes_old_terminal_rows_only_and_leaves_alerts() {
         DeliveryState::Retrying
     );
     assert_eq!(store.get_all_alerts().unwrap().len(), alerts_before);
+}
+
+/// The sweep reports how many of the rows it removed were dead letters, so the operator can tell
+/// delivered history from alerts that were lost.
+#[test]
+fn prune_counts_the_dead_letters_it_removes() {
+    let (_dir, _path, store) = open();
+    let delivered = alert(AlertSeverity::Medium, "delivered");
+    let lost = alert(AlertSeverity::Medium, "lost");
+    for a in [&delivered, &lost] {
+        enqueue(&store, a, &["s"], 1);
+    }
+    mark_delivered(&store, "s", delivered.id, 100);
+    dead_letter(&store, "s", lost.id, 100, 0);
+
+    let pruned = store.prune_deliveries(1_000, 500).unwrap();
+
+    assert_eq!((pruned.rows, pruned.dead_letters), (2, 1));
+    assert!(store.dead_letters("s").unwrap().is_empty());
+}
+
+/// The dead-letter count rides on the open-row scan, so one read keeps the depth truthful.
+#[test]
+fn open_deliveries_counts_the_sinks_dead_letters() {
+    let (_dir, _path, store) = open();
+    let alerts: Vec<Alert> = (0..3)
+        .map(|i| alert(AlertSeverity::Medium, &format!("t{i}")))
+        .collect();
+    for a in &alerts {
+        enqueue(&store, a, &["s", "other"], 1);
+    }
+    dead_letter(&store, "s", alerts[0].id, 10, 0);
+    dead_letter(&store, "other", alerts[1].id, 20, 0);
+
+    let open_rows = store.open_deliveries("s").unwrap();
+
+    assert_eq!(open_rows.dead_letters, 1);
+    assert_eq!(open_rows.rows.len(), 2);
 }
 
 #[test]

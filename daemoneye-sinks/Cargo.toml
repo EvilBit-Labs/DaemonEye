@@ -14,11 +14,6 @@ publish                = false
 exclude.workspace      = true
 readme                 = "README.md"
 
-# `ring` and `rustls-platform-verifier` are direct dependencies only so their
-# versions are pinned here; the sinks reach them through rustls, reqwest and lettre.
-[package.metadata.cargo-machete]
-ignored = ["ring", "rustls-platform-verifier"]
-
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }

@@ -62,9 +62,8 @@ pub struct ExternalAlert {
 }
 
 fn epoch_ms(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH).map_or(0, |elapsed| {
-        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-    })
+    time.duration_since(UNIX_EPOCH)
+        .map_or(0, super::delivery::millis)
 }
 
 impl ExternalAlert {

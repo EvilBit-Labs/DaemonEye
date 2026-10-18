@@ -15,11 +15,20 @@ pub fn config_error(message: &str) -> AlertingError {
 }
 
 /// Whether a rustls error means the peer's certificate was not accepted.
-pub const fn is_certificate_error(error: &rustls::Error) -> bool {
+const fn is_certificate_error(error: &rustls::Error) -> bool {
     matches!(
         *error,
         rustls::Error::InvalidCertificate(_) | rustls::Error::NoCertificatesPresented
     )
+}
+
+/// A rejected certificate is a misconfiguration; any other TLS failure is transient.
+pub const fn classify_tls(cause: &rustls::Error) -> DeliveryError {
+    if is_certificate_error(cause) {
+        DeliveryError::tls_verification()
+    } else {
+        DeliveryError::transient(DeliveryErrorClass::Tls)
+    }
 }
 
 /// The first rustls error in `error`'s source chain, if any.
@@ -49,11 +58,7 @@ pub fn classify_reqwest(error: &reqwest::Error) -> DeliveryError {
         return transient(DeliveryErrorClass::Timeout);
     }
     if let Some(tls) = tls_cause(error) {
-        return if is_certificate_error(tls) {
-            DeliveryError::tls_verification()
-        } else {
-            transient(DeliveryErrorClass::Tls)
-        };
+        return classify_tls(tls);
     }
     if error.is_connect() {
         return transient(DeliveryErrorClass::Connect);
@@ -69,11 +74,7 @@ pub fn classify_reqwest(error: &reqwest::Error) -> DeliveryError {
 /// Classify a failed TLS handshake or stream error.
 pub fn classify_tls_io(error: &std::io::Error) -> DeliveryError {
     if let Some(tls) = tls_cause(error) {
-        return if is_certificate_error(tls) {
-            DeliveryError::tls_verification()
-        } else {
-            DeliveryError::transient(DeliveryErrorClass::Tls)
-        };
+        return classify_tls(tls);
     }
     DeliveryError::from(std::io::Error::from(error.kind()))
 }

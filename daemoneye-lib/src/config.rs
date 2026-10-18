@@ -139,7 +139,7 @@ pub struct AlertingConfig {
     pub sinks: Vec<AlertSinkConfig>,
     /// Alert deduplication window in seconds
     pub dedup_window_seconds: u64,
-    /// Maximum alert rate per minute
+    /// Delivery pacing per sink, in alerts per minute; excess alerts wait and are never dropped
     pub max_alerts_per_minute: Option<u32>,
     /// Threshold in seconds for considering an alert as recent
     pub recent_threshold_seconds: u64,
@@ -266,7 +266,17 @@ impl DeliveryConfig {
             &self.dlq_max_redrives,
             &Self::DLQ_MAX_REDRIVES_MIN,
             &Self::DLQ_MAX_REDRIVES_MAX,
-        )
+        )?;
+        let max_backoff_ms = self.max_backoff_secs.saturating_mul(1_000);
+        if self.initial_backoff_ms > max_backoff_ms {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "alerting.delivery.initial_backoff_ms ({}) exceeds max_backoff_secs ({} s)",
+                    self.initial_backoff_ms, self.max_backoff_secs
+                ),
+            });
+        }
+        Ok(())
     }
 }
 

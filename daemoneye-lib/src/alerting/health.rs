@@ -10,6 +10,10 @@ pub(super) const SUCCESS_WINDOW: usize = 100;
 
 /// Point-in-time health of one sink.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "a read-only snapshot of four independent flags; none is a state of another"
+)]
 pub struct SinkHealthSnapshot {
     /// Sink name.
     pub name: String,
@@ -17,13 +21,17 @@ pub struct SinkHealthSnapshot {
     pub is_local: bool,
     /// Circuit breaker state; always closed for a local sink.
     pub breaker: BreakerState,
-    /// Transient failures since the last success.
+    /// Failed attempts of any class since the last success.
     pub consecutive_failures: u64,
+    /// The failures since the last success reached the breaker threshold (one failure, for a
+    /// local sink). Unlike the breaker, this also counts permanent rejections, so a sink that
+    /// answers every alert with a refusal shows as failing.
+    pub failing: bool,
     /// Send attempts since start.
     pub attempts: u64,
     /// Rows delivered since start.
     pub delivered: u64,
-    /// Fraction of the last 100 attempts that succeeded; `1.0` before any attempt.
+    /// Fraction of the last `SUCCESS_WINDOW` attempts that succeeded; `1.0` before any attempt.
     pub success_rate: f64,
     /// Current dead-letter depth for the sink (seeded from the store at start).
     pub dead_letters: u64,
@@ -46,13 +54,14 @@ pub struct SinkHealthSnapshot {
 }
 
 impl SinkHealthSnapshot {
-    /// An open or probing breaker, a misconfiguration, or (for a local sink, which has no
-    /// breaker) a failure since the last success.
+    /// An open or probing breaker, a misconfiguration, a run of failures (see
+    /// [`failing`](Self::failing)), or undecodable rows the worker has to skip.
     #[must_use]
-    pub fn is_unhealthy(&self) -> bool {
-        self.breaker != BreakerState::Closed
+    pub const fn is_unhealthy(&self) -> bool {
+        !matches!(self.breaker, BreakerState::Closed)
             || self.misconfigured
-            || (self.is_local && self.consecutive_failures > 0)
+            || self.failing
+            || self.corrupt > 0
     }
 }
 
@@ -77,6 +86,8 @@ pub struct DeliveryHealth {
     pub store_failures: u64,
     /// Publisher calls that failed since start.
     pub publish_failures: u64,
+    /// Alerts the store refused, each sent once to the local sinks only.
+    pub unpersisted_alerts: u64,
     /// Roll-up of the above.
     pub aggregate: DeliveryAggregate,
 }
@@ -86,7 +97,8 @@ pub struct DeliveryHealth {
 pub(super) struct GlobalStats {
     pub(super) store_failures: u64,
     pub(super) publish_failures: u64,
-    /// A store call failed and no alert has been persisted since.
+    pub(super) unpersisted_alerts: u64,
+    /// A store call failed and nothing has been written since.
     pub(super) store_failing: bool,
 }
 
@@ -96,12 +108,17 @@ impl GlobalStats {
         self.store_failing = true;
     }
 
+    /// A write landed, so the store is taking writes again.
     pub(super) const fn store_ok(&mut self) {
         self.store_failing = false;
     }
 
     pub(super) const fn publish_failed(&mut self) {
         self.publish_failures = self.publish_failures.saturating_add(1);
+    }
+
+    pub(super) const fn unpersisted(&mut self) {
+        self.unpersisted_alerts = self.unpersisted_alerts.saturating_add(1);
     }
 }
 
@@ -110,6 +127,7 @@ impl GlobalStats {
 pub(super) struct SinkStats {
     pub(super) breaker: BreakerState,
     pub(super) consecutive_failures: u64,
+    pub(super) failing: bool,
     pub(super) attempts: u64,
     pub(super) delivered: u64,
     recent: VecDeque<bool>,
@@ -128,6 +146,7 @@ impl SinkStats {
         Self {
             breaker: BreakerState::Closed,
             consecutive_failures: 0,
+            failing: false,
             attempts: 0,
             delivered: 0,
             recent: VecDeque::new(),

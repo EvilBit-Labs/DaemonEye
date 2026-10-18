@@ -3,7 +3,7 @@
 use ring::digest::{SHA256, digest};
 use std::borrow::Cow;
 
-/// A key that is printable ASCII without `"`, `\\` or `]` and fits `max_bytes` is sent as
+/// A key that is printable ASCII without `"`, `\` or `]` and fits `max_bytes` is sent as
 /// is. Any other key is sent as `sha256:` plus the hex digest of the whole key, so two
 /// distinct keys never share a wire value.
 pub fn wire_key(key: &str, max_bytes: usize) -> Cow<'_, str> {

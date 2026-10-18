@@ -18,8 +18,8 @@ mod support;
 
 use daemoneye_lib::alerting::config::{WebhookAuth, WebhookSpec};
 use daemoneye_lib::alerting::{
-    AlertSink, AlertSinkFactory, AlertingError, DeliveryError, DeliveryErrorClass, ResolvedSink,
-    SinkSpec,
+    AlertSink, AlertSinkFactory, AlertingError, Credentials, DeliveryError, DeliveryErrorClass,
+    ResolvedSink, SinkSpec,
 };
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::process::ProcessRecord;
@@ -56,12 +56,21 @@ fn spec(url: String) -> WebhookSpec {
     }
 }
 
+/// Credentials shaped for the spec's auth scheme, as the resolver would produce them.
 fn resolved(spec: WebhookSpec) -> ResolvedSink {
+    let credentials = if matches!(spec.auth, WebhookAuth::None) {
+        Credentials::None
+    } else if matches!(spec.auth, WebhookAuth::Basic) {
+        Credentials::Basic {
+            username: SecretString::from("u".to_owned()),
+            password: SecretString::from("p".to_owned()),
+        }
+    } else {
+        Credentials::Token(SecretString::from(TOKEN.to_owned()))
+    };
     ResolvedSink {
         spec: SinkSpec::Webhook(spec),
-        token: Some(SecretString::from(TOKEN.to_owned())),
-        username: Some(SecretString::from("u".to_owned())),
-        password: Some(SecretString::from("p".to_owned())),
+        credentials,
     }
 }
 
@@ -266,12 +275,37 @@ async fn reset_connection_is_transient() {
 async fn response_body_is_never_read() {
     const TEN_MIB: usize = 10 * 1024 * 1024;
     let server = MockHttp::start(vec![Response::LargeBody(200, TEN_MIB)]).await;
-    let started = Instant::now();
     sink(spec(server.url("http"))).send(&alert()).await.unwrap();
-    // Streaming 10 MiB at 64 KiB per 5 ms takes about 0.8 s; Ok must not wait for it.
-    assert!(started.elapsed() < Duration::from_millis(500));
+    // Streaming 10 MiB at 64 KiB per 5 ms takes about 0.8 s. Had Ok waited for the body, the
+    // server would have written all of it by now; the wall clock is too noisy on CI to assert.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(server.bytes_written() < TEN_MIB / 2);
+}
+
+/// At least once: a resend of the same alert carries the same alert-id header, so a receiver
+/// can deduplicate on it.
+#[tokio::test]
+async fn a_resend_carries_the_same_alert_id_header() {
+    let server = MockHttp::start(vec![
+        Response::Status(503, vec![]),
+        Response::Status(200, vec![]),
+    ])
+    .await;
+    let alert = alert();
+    let sink = sink(spec(server.url("http")));
+    delivery_error(sink.send(&alert).await);
+    sink.send(&alert).await.unwrap();
+
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].header("x-daemoneye-alert-id"),
+        Some(alert.id.to_string().as_str())
+    );
+    assert_eq!(
+        requests[0].header("x-daemoneye-alert-id"),
+        requests[1].header("x-daemoneye-alert-id")
+    );
 }
 
 #[tokio::test]
@@ -324,6 +358,26 @@ async fn ca_file_replaces_the_roots_and_is_required_for_a_private_ca() {
     let error = delivery_error(sink(untrusted).send(&alert()).await);
     assert_eq!(error, DeliveryError::tls_verification());
     assert_eq!(server.requests().len(), 1, "request sent despite bad cert");
+}
+
+/// A `ca_file` for another authority does not trust the server: the file replaces the roots
+/// rather than being ignored or merged with a store the test PKI is not in.
+#[tokio::test]
+async fn a_ca_file_for_another_authority_does_not_trust_the_server() {
+    let serving = TestPki::generate();
+    let other = TestPki::generate();
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockHttp::start_tls(vec![], &serving).await;
+
+    let mut wrong_ca = spec(server.url("https"));
+    wrong_ca.allow_http = false;
+    wrong_ca.ca_file = Some(other.write_ca(dir.path()));
+    let error = delivery_error(sink(wrong_ca).send(&alert()).await);
+    assert_eq!(error, DeliveryError::tls_verification());
+    assert!(
+        server.requests().is_empty(),
+        "request sent despite bad cert"
+    );
 }
 
 #[tokio::test]
@@ -400,9 +454,7 @@ fn builder_builds_webhook_and_syslog_sinks() {
     let result = AlertSinkFactory::build(
         &ResolvedSink {
             spec: SinkSpec::Syslog(syslog),
-            token: None,
-            username: None,
-            password: None,
+            credentials: Credentials::None,
         },
         &delivery(),
         Some(&NetworkSinkBuilder),

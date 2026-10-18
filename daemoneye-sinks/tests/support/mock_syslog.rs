@@ -14,6 +14,7 @@
 )]
 
 use super::mock_http::TestPki;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -29,6 +30,7 @@ pub struct MockSyslog {
     pub address: String,
     received: Messages,
     kick: Arc<Notify>,
+    accepted: Arc<AtomicUsize>,
     task: JoinHandle<()>,
 }
 
@@ -39,16 +41,12 @@ impl Drop for MockSyslog {
 }
 
 impl MockSyslog {
-    const fn new(
-        address: String,
-        received: Messages,
-        kick: Arc<Notify>,
-        task: JoinHandle<()>,
-    ) -> Self {
+    fn new(address: String, received: Messages, kick: Arc<Notify>, task: JoinHandle<()>) -> Self {
         Self {
             address,
             received,
             kick,
+            accepted: Arc::default(),
             task,
         }
     }
@@ -56,6 +54,11 @@ impl MockSyslog {
     /// Everything received so far.
     pub fn messages(&self) -> Vec<String> {
         self.received.lock().unwrap().clone()
+    }
+
+    /// Stream connections accepted so far (always zero for the datagram receivers).
+    pub fn connections(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
     }
 
     /// Wait until `count` messages arrived and return them.
@@ -105,9 +108,11 @@ impl MockSyslog {
         let address = listener.local_addr().unwrap().to_string();
         let received = Messages::default();
         let kick = Arc::new(Notify::new());
-        let (sink, stop) = (received.clone(), kick.clone());
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let (sink, stop, count) = (received.clone(), kick.clone(), accepted.clone());
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
                 match tls {
                     Some(ref acceptor) => {
                         if let Ok(stream) = acceptor.accept(stream).await {
@@ -118,7 +123,9 @@ impl MockSyslog {
                 }
             }
         });
-        Self::new(address, received, kick, task)
+        let mut server = Self::new(address, received, kick, task);
+        server.accepted = accepted;
+        server
     }
 
     #[cfg(unix)]

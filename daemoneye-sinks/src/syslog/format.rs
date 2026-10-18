@@ -7,19 +7,29 @@ use daemoneye_lib::models::{Alert, AlertSeverity, CompletenessStatus};
 
 /// 32473 is the IANA private-enterprise number reserved for documentation.
 const SD_ID: &str = "daemoneye@32473";
-const DEFAULT_FACILITY: u8 = 3;
-/// RFC 5424 allows 255, but truncation is permitted. Header fields are printable ASCII, so these
-/// character caps are also byte caps.
+/// RFC 5424 allows 255 (HOSTNAME), 48 (APP-NAME) and 32 (MSGID); the hostname is cut to 64.
+/// Header fields are printable ASCII, so these character caps are also byte caps.
 const MAX_HOSTNAME: usize = 64;
 const MAX_APP_NAME: usize = 48;
 const MAX_MSGID: usize = 32;
-/// Bounds each escaped SD-PARAM value in UTF-8 bytes. Worst-case empty-MSG flagged line, in bytes:
-/// header 180 (PRI 7, timestamp 25, host 65, app 49, `-` and 2 spaces, msgid 32) + SD id 17 +
-/// fixed params 58 (`rule`, `pid` at 10 digits, `completeness="degraded"`, `dedup`) +
-/// `truncated="1"` 14 + `]` and MSG separator 2 = 271, plus two values at the cap:
-/// 271 + 2 * 96 = 463, under the 480-byte `max_message_bytes` floor.
+/// Bounds each escaped SD-PARAM value in UTF-8 bytes. Worst-case flagged line with an empty MSG
+/// plus its separator, in bytes: header 180 (PRI 7, timestamp 25, host 65, app 49, `- ` 2,
+/// msgid 32) + SD id 17 + fixed params 58 (`rule`, `pid` at 10 digits,
+/// `completeness="degraded"`, `dedup`) + `truncated="1"` 14 + `]` 1 + one MSG separator 1 =
+/// 271, plus the two values at the cap. [`WORST_CASE_LINE_BYTES`] keeps that under the
+/// 480-byte `max_message_bytes` floor.
 const MAX_SD_VALUE_BYTES: usize = 96;
 const TRUNCATED_PARAM: &str = " truncated=\"1\"";
+/// Everything in a flagged line except the two capped SD values.
+const WORST_CASE_FIXED_BYTES: usize = 271;
+/// The longest flagged line the formatter can emit before the MSG.
+const WORST_CASE_LINE_BYTES: usize = WORST_CASE_FIXED_BYTES + 2 * MAX_SD_VALUE_BYTES;
+/// The smallest `max_message_bytes` the config accepts.
+const MESSAGE_BYTES_FLOOR: usize = 480;
+const _: () = assert!(
+    WORST_CASE_LINE_BYTES <= MESSAGE_BYTES_FLOOR,
+    "the flagged line must fit the smallest max_message_bytes before any MSG is added"
+);
 
 /// Everything the formatter needs for one message.
 pub(super) struct MessageParts<'a> {
@@ -30,21 +40,22 @@ pub(super) struct MessageParts<'a> {
     pub alert: &'a Alert,
 }
 
-/// Facility number for a syslog facility name; unknown names map to `daemon`.
-pub(super) fn parse_facility(name: &str) -> u8 {
+/// Facility number for a syslog facility name; `None` for a name syslog does not define, so a
+/// typo refuses startup instead of routing to `daemon`.
+pub(super) fn parse_facility(name: &str) -> Option<u8> {
     const NAMED: [&str; 12] = [
         "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron",
         "authpriv", "ftp",
     ];
     let lower = name.trim().to_ascii_lowercase();
     if let Some(index) = NAMED.iter().position(|known| *known == lower) {
-        return u8::try_from(index).unwrap_or(DEFAULT_FACILITY);
+        return u8::try_from(index).ok();
     }
     lower
         .strip_prefix("local")
         .and_then(|digit| digit.parse::<u8>().ok())
         .filter(|digit| *digit <= 7)
-        .map_or(DEFAULT_FACILITY, |digit| digit.saturating_add(16))
+        .map(|digit| digit.saturating_add(16))
 }
 
 #[allow(

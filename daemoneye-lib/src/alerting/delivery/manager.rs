@@ -7,13 +7,15 @@ use super::{
 use crate::alerting::health::{
     DeliveryHealth, GlobalStats, SinkHealthSnapshot, SinkStats, aggregate,
 };
-use crate::alerting::{AlertSink, AlertingError, HealthSummary};
+use crate::alerting::{AlertSink, AlertingError};
 use crate::config::AlertingConfig;
 use crate::models::{Alert, DeliveryRecord, DeliveryState, Uuid};
 use crate::storage::{EnqueueReport, EventStore};
+use futures::FutureExt;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -130,8 +132,9 @@ impl AlertManager {
     ///
     /// # Errors
     ///
-    /// [`AlertingError::ConfigurationError`] for a duplicate or unusable sink name;
-    /// [`AlertingError::DeduplicationError`] when the window cannot be seeded.
+    /// [`AlertingError::ConfigurationError`] for a delivery setting out of range, or a duplicate
+    /// or unusable sink name; [`AlertingError::DeduplicationError`] when the window cannot be
+    /// seeded.
     pub async fn start(
         store: Arc<EventStore>,
         sinks: Vec<Box<dyn AlertSink>>,
@@ -167,6 +170,11 @@ impl AlertManager {
         cancel: watch::Receiver<bool>,
         seed: Option<u64>,
     ) -> Result<Self, AlertingError> {
+        // The loader validates a config file; a config built in code gets the same check here.
+        alerting
+            .delivery
+            .validate()
+            .map_err(|error| AlertingError::ConfigurationError(error.to_string()))?;
         let runtimes = build_runtimes(sinks)?;
         let shared = Arc::new(Shared {
             store,
@@ -184,13 +192,12 @@ impl AlertManager {
                 || StdRng::from_rng(&mut rand::rng()),
                 |base| StdRng::seed_from_u64(base.wrapping_add(u64::try_from(index).unwrap_or(0))),
             );
-            let worker = SinkWorker::new(
+            tasks.spawn(supervise(
                 Arc::clone(&shared),
                 Arc::clone(runtime),
                 rng,
                 stop_rx.clone(),
-            );
-            tasks.spawn(worker.run());
+            ));
         }
         let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_QUEUE_CAPACITY);
         tasks.spawn(run_publisher(
@@ -210,7 +217,8 @@ impl AlertManager {
         })
     }
 
-    /// Persist `alert` with one delivery row per sink, then announce it.
+    /// Persist `alert` with one delivery row per sink, then announce it on the publish queue,
+    /// unless it is a suppressed or already-enqueued duplicate.
     ///
     /// An alert inside the dedup window of the same `deduplication_key` is stored with its rows
     /// marked as suppressed duplicates, and does not extend the window.
@@ -247,24 +255,13 @@ impl AlertManager {
                 return EnqueueOutcome::NotPersisted;
             }
         };
-        // The alert is durable now: a trim failure is a store-health problem, not a lost alert.
-        let trim_report = report.clone();
-        let evicted = match self
-            .shared
-            .blocking(move |store| evict_overflow(store, &trim_report, keep))
-            .await
-        {
-            Ok(evicted) => evicted,
-            Err(error) => {
-                error!(alert_id = %alert.id, %error, "dead-letter eviction failed after commit");
-                Vec::new()
-            }
-        };
         let rows = match report {
             EnqueueReport::Enqueued { rows } => rows,
             EnqueueReport::AlreadyEnqueued => return EnqueueOutcome::AlreadyEnqueued,
         };
-        self.count_queue_full(&rows, &evicted);
+        // The alert is durable now: a trim failure is a store-health problem, not a lost alert.
+        let evicted = self.evict_overflow(alert.id, &rows, keep).await;
+        self.count_queue_full(alert.id, &rows, &evicted);
         if let Some(by) = suppressor {
             return EnqueueOutcome::SuppressedDuplicate { by };
         }
@@ -278,7 +275,35 @@ impl AlertManager {
         EnqueueOutcome::Enqueued
     }
 
-    fn count_queue_full(&self, rows: &[PlacedRow], evicted: &[(String, usize)]) {
+    /// Trim the dead letters of every sink that just dropped or displaced a row; each sink's
+    /// trim is its own store call, so one failure does not hide another sink's count.
+    async fn evict_overflow(
+        &self,
+        alert_id: Uuid,
+        rows: &[PlacedRow],
+        keep: usize,
+    ) -> Vec<(String, usize)> {
+        let mut evicted = Vec::new();
+        for &(ref name, state, displaced) in rows {
+            if displaced.is_none() && !is_refused(state) {
+                continue;
+            }
+            let sink = name.clone();
+            match self
+                .shared
+                .blocking(move |store| store.evict_dead_letters(&sink, keep))
+                .await
+            {
+                Ok(removed) => evicted.push((name.clone(), removed)),
+                Err(error) => {
+                    error!(sink = %name, %alert_id, %error, "dead-letter eviction failed after commit");
+                }
+            }
+        }
+        evicted
+    }
+
+    fn count_queue_full(&self, alert_id: Uuid, rows: &[PlacedRow], evicted: &[(String, usize)]) {
         for sink in &self.sinks {
             let dropped = rows
                 .iter()
@@ -291,6 +316,15 @@ impl AlertManager {
                 .filter(|entry| entry.0 == sink.name)
                 .map(|entry| entry.1)
                 .sum();
+            if dropped > 0 || removed > 0 {
+                warn!(
+                    sink = %sink.name,
+                    %alert_id,
+                    dropped,
+                    evicted = removed,
+                    "open-row cap dead-lettered a row; dead letters evicted to hold the cap"
+                );
+            }
             let mut stats = lock(&sink.stats);
             stats.queue_full = stats.queue_full.saturating_add(to_u64(dropped));
             stats.dead_letters = stats.dead_letters.saturating_add(to_u64(dropped));
@@ -301,25 +335,33 @@ impl AlertManager {
 
     /// Send `alert` once, directly, to the local sinks only.
     ///
-    /// For an alert the store would not take: it is marked `not_persisted` and never touches the
-    /// dedup window or the outbox.
+    /// For an alert the store would not take: it is marked `not_persisted`, counted in
+    /// [`DeliveryHealth::unpersisted_alerts`], and never touches the dedup window or the outbox.
     pub async fn deliver_unpersisted(&self, alert: &Alert) {
+        lock(&self.shared.global).unpersisted();
         let mut marked = alert.clone();
         marked
             .context
             .data
             .insert("not_persisted".to_owned(), "true".to_owned());
         let timeout = self.shared.settings.attempt_timeout;
-        let sends = self.sinks.iter().filter(|sink| sink.is_local).map(|sink| {
+        let (alert_id, rule_id) = (alert.id, alert.detection_rule_id.as_str());
+        let locals: Vec<&Arc<SinkRuntime>> =
+            self.sinks.iter().filter(|sink| sink.is_local).collect();
+        if locals.is_empty() {
+            warn!(%alert_id, rule_id, "unpersisted alert lost: no local sink is configured");
+            return;
+        }
+        let sends = locals.into_iter().map(|sink| {
             let shared_alert = &marked;
             async move {
                 match tokio::time::timeout(timeout, sink.sink.send(shared_alert)).await {
                     Ok(Ok(_delivered)) => {}
                     Ok(Err(error)) => {
-                        warn!(sink = %sink.name, %error, "unpersisted alert delivery failed");
+                        warn!(sink = %sink.name, %alert_id, rule_id, %error, "unpersisted alert delivery failed");
                     }
                     Err(_elapsed) => {
-                        warn!(sink = %sink.name, "unpersisted alert delivery timed out");
+                        warn!(sink = %sink.name, %alert_id, rule_id, "unpersisted alert delivery timed out");
                     }
                 }
             }
@@ -346,6 +388,7 @@ impl AlertManager {
             sinks,
             store_failures: global.store_failures,
             publish_failures: global.publish_failures,
+            unpersisted_alerts: global.unpersisted_alerts,
         }
     }
 
@@ -365,9 +408,11 @@ impl AlertManager {
         }
     }
 
-    /// Move `sink`'s dead letters back to `Pending`; returns how many moved.
+    /// Move `sink`'s dead letters back to `Pending`; returns how many moved. An unknown sink
+    /// name is logged and moves nothing.
     pub async fn redrive(&self, sink: &str) -> usize {
         let Some(runtime) = self.sinks.iter().find(|candidate| candidate.name == sink) else {
+            warn!(%sink, "redrive requested for a sink that is not configured");
             return 0;
         };
         let name = sink.to_owned();
@@ -388,61 +433,79 @@ impl AlertManager {
                 0
             }
         };
+        lock(&runtime.stats).left_dead_letters(to_u64(moved));
         runtime.wake.notify_one();
         moved
     }
 
     /// Stop the workers: no new sends start, in-flight ones get `drain` to finish, the rest are
-    /// aborted and their rows stay `Retrying` for the next start.
+    /// aborted and their rows stay `Retrying` for the next start. Announcements still queued for
+    /// the publisher are dropped and counted; the alerts are durable and the workers pick their
+    /// rows up by tick.
     pub async fn shutdown(&self, drain: Duration) {
         self.stop.send_replace(true);
         let mut tasks = std::mem::take(&mut *lock(&self.tasks));
-        let drained =
-            tokio::time::timeout(drain, async { while tasks.join_next().await.is_some() {} }).await;
+        let drained = tokio::time::timeout(drain, join_all_logged(&mut tasks)).await;
         if drained.is_err() {
             warn!("alert workers did not drain in time; aborting in-flight sends");
             tasks.abort_all();
-            while tasks.join_next().await.is_some() {}
+            join_all_logged(&mut tasks).await;
         }
     }
 
-    /// Whether each sink answers its own health check.
+    /// Whether each sink answers its own health check within the attempt timeout.
     pub async fn health_check(&self) -> HashMap<String, Result<(), AlertingError>> {
+        let timeout = self.shared.settings.attempt_timeout;
         let mut results = HashMap::new();
         for sink in &self.sinks {
-            let result =
-                sink.sink
-                    .health_check()
-                    .await
-                    .map_err(|error| AlertingError::HealthCheckFailed {
-                        sink: sink.name.clone(),
-                        error: error.to_string(),
-                    });
+            let result = match tokio::time::timeout(timeout, sink.sink.health_check()).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(_elapsed) => Err("health check timed out".to_owned()),
+            }
+            .map_err(|error| AlertingError::HealthCheckFailed {
+                sink: sink.name.clone(),
+                error,
+            });
             results.insert(sink.name.clone(), result);
         }
         results
     }
+}
 
-    /// Health-check roll-up over every sink.
-    pub async fn health_summary(&self) -> HealthSummary {
-        let results = self.health_check().await;
-        let total_sinks = results.len();
-        let healthy_sinks = results.values().filter(|result| result.is_ok()).count();
-        let details = results
-            .into_iter()
-            .map(|(name, result)| {
-                let status = match result {
-                    Ok(()) => "healthy".to_owned(),
-                    Err(error) => format!("unhealthy: {error}"),
-                };
-                (name, status)
-            })
-            .collect();
-        HealthSummary {
-            total_sinks,
-            healthy_sinks,
-            unhealthy_sinks: total_sinks.saturating_sub(healthy_sinks),
-            details,
+/// Join every task, logging the ones that ended by panic.
+async fn join_all_logged(tasks: &mut JoinSet<()>) {
+    while let Some(joined) = tasks.join_next().await {
+        if let Err(error) = joined
+            && error.is_panic()
+        {
+            error!(%error, "alert delivery task panicked");
+        }
+    }
+}
+
+/// Run the sink's worker, restarting it after a tick if it panics; a sink's rows must not pile
+/// up silently because one send blew up.
+async fn supervise(
+    shared: Arc<Shared>,
+    runtime: Arc<SinkRuntime>,
+    mut rng: StdRng,
+    mut cancel: watch::Receiver<bool>,
+) {
+    loop {
+        let worker = SinkWorker::new(
+            Arc::clone(&shared),
+            Arc::clone(&runtime),
+            StdRng::from_rng(&mut rng),
+            cancel.clone(),
+        );
+        if AssertUnwindSafe(worker.run()).catch_unwind().await.is_ok() {
+            return;
+        }
+        error!(sink = %runtime.name, "alert worker panicked; restarting it after a tick");
+        tokio::select! {
+            () = tokio::time::sleep(super::WORKER_TICK) => {}
+            () = wait_cancelled(&mut cancel) => return,
         }
     }
 }
@@ -453,24 +516,6 @@ const fn is_refused(state: DeliveryState) -> bool {
     matches!(state, DeliveryState::DeadLettered)
 }
 
-/// Trim the dead letters of every sink that just dropped or displaced a row.
-fn evict_overflow(
-    store: &EventStore,
-    report: &EnqueueReport,
-    keep: usize,
-) -> Result<Vec<(String, usize)>, crate::storage::StorageError> {
-    let EnqueueReport::Enqueued { ref rows } = *report else {
-        return Ok(Vec::new());
-    };
-    let mut evicted = Vec::new();
-    for &(ref name, state, displaced) in rows {
-        if displaced.is_some() || is_refused(state) {
-            evicted.push((name.clone(), store.evict_dead_letters(name, keep)?));
-        }
-    }
-    Ok(evicted)
-}
-
 fn snapshot(sink: &SinkRuntime, now_ms: u64) -> SinkHealthSnapshot {
     let stats = lock(&sink.stats);
     SinkHealthSnapshot {
@@ -478,6 +523,7 @@ fn snapshot(sink: &SinkRuntime, now_ms: u64) -> SinkHealthSnapshot {
         is_local: sink.is_local,
         breaker: stats.breaker,
         consecutive_failures: stats.consecutive_failures,
+        failing: stats.failing,
         attempts: stats.attempts,
         delivered: stats.delivered,
         success_rate: stats.success_rate(),
@@ -552,7 +598,8 @@ async fn forward_cancel(
     }
 }
 
-/// Announce queued alerts until stopped; a failed publish is counted, never retried.
+/// Announce queued alerts until stopped; a failed publish is counted, never retried, and so is
+/// every announcement still queued when the stop arrives.
 async fn run_publisher(
     shared: Arc<Shared>,
     publisher: Arc<dyn AlertPublisher>,
@@ -565,11 +612,23 @@ async fn run_publisher(
                 Some(alert) => alert,
                 None => return,
             },
-            () = wait_cancelled(&mut stop) => return,
+            () = wait_cancelled(&mut stop) => break,
         };
         if let Err(error) = publisher.publish(&alert).await {
             warn!(alert_id = %alert.id, %error, "alert publish failed");
             lock(&shared.global).publish_failed();
         }
+    }
+    queue.close();
+    let mut dropped = 0_u64;
+    while queue.try_recv().is_ok() {
+        dropped = dropped.saturating_add(1);
+        lock(&shared.global).publish_failed();
+    }
+    if dropped > 0 {
+        warn!(
+            dropped,
+            "alert announcements still queued at shutdown were dropped"
+        );
     }
 }
