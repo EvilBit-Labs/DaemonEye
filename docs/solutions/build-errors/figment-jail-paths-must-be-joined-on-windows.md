@@ -32,11 +32,11 @@ A config test created files inside a `figment::Jail`, then referenced them by st
   assertion failed: failure(&webhook(&at("empty.pem"))).contains("certificate")
   ```
 
-- The earlier assertion in the same test, that a missing file's message contains `ca_file`, passed, because the validator's read-error message also contains `ca_file` (`daemoneye-lib/src/alerting/config.rs:492`). Only the assertion that depends on the file actually being read reached the mismatch.
+- The earlier assertion in the same test, that a missing file's message contains `ca_file`, passed, because the validator's read-error message in `validate_ca_file` (`daemoneye-lib/src/alerting/config.rs`) also contains `ca_file`. Only the assertion that depends on the file actually being read reached the mismatch.
 
 ## What Didn't Work
 
-- Reading the test and the validator for a Windows-specific branch. `validate_ca_file` (`daemoneye-lib/src/alerting/config.rs:489`) has none: it rejects `..` components, reads the file, and scans for the PEM marker. Nothing in it treats platforms differently, so the code under test was not the place to look.
+- Reading the test and the validator for a Windows-specific branch. `validate_ca_file` (`daemoneye-lib/src/alerting/config.rs`) has none: it rejects `..` components, reads the file, and scans for the PEM marker. Nothing in it treats platforms differently, so the code under test was not the place to look.
 - Suspecting the traversal check. The jail directory contains no `..` component on any platform, and the message that came back was the read error, not the traversal error.
 
 ## Solution
@@ -48,11 +48,11 @@ Build the path with `Path::join` instead of formatting a string:
 let dir = jail.directory().to_string_lossy().into_owned();
 let at = |name: &str| json!({"ca_file": format!("{dir}/{name}")});
 
-// After (daemoneye-lib/tests/alerting_config.rs:235)
+// After (daemoneye-lib/tests/alerting_config.rs, `ca_file_must_exist_parse_and_avoid_traversal`)
 let at = |name: &str| json!({"ca_file": jail.directory().join(name).to_string_lossy()});
 ```
 
-The fix is in PR #291, open as of this writing; this write-up ships in the same PR.
+Fixed in PR #291; this write-up ships in the same PR.
 
 ## Why This Works
 

@@ -88,11 +88,11 @@ The agent's record of one alert bound for one sink, in the `alert_deliveries` ta
 
 ### Dead-letter queue
 
-The delivery rows of one sink that reached `dead_lettered`: attempts exhausted, a permanent error, a misconfigured sink, a missing alert, or displacement from a full queue. It is a state of the row, not a second store. It is bounded per sink by row count, the lowest-severity oldest rows evicted first and counted, and it is redriven automatically a hundred rows at a time once a tripped breaker has stayed closed for a full cool-down, and once at agent start, up to a redrive cap counted only on rows actually re-attempted.
+The delivery rows of one sink that reached `dead_lettered`: attempts exhausted, a permanent error, a misconfigured sink, a missing alert, or displacement from a full queue. It is a state of the row, not a second store. It is bounded per sink by row count, the lowest-severity oldest rows evicted first and counted, and it is redriven automatically a hundred rows at a time once a tripped breaker has stayed closed for a full cool-down, and once at agent start, up to a per-row redrive cap, counted when a row moves back to pending.
 
 ### Sink breaker
 
-The per-sink circuit breaker in the delivery worker: closed, open, or half-open. Consecutive transient failures open it at the configured threshold; a misconfigured outcome (an authentication or certificate failure) opens it on one occurrence; after the cool-down it admits one probe and closes on success. While open, no call is made to the sink and new rows wait. Local sinks have none.
+The per-sink circuit breaker in the delivery worker: closed, open, or half-open. Consecutive transient failures open it at the configured threshold; a misconfigured outcome (an authentication or certificate failure) opens it on one occurrence; after the cool-down it admits one probe and closes when the probe is answered (a success, or a permanent rejection). While open, no call is made to the sink and new rows wait. Local sinks have none.
 
 ### Rule generation
 

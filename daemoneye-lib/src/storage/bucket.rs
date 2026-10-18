@@ -18,8 +18,7 @@ pub(super) const BUCKET_PREFIX: &str = "processes.events@";
 /// One hour in milliseconds — the default bucket granularity.
 pub(super) const HOURLY_MS: u64 = 3_600_000;
 
-/// One day in milliseconds — the coarse granularity for long retention windows.
-/// Milliseconds in one day.
+/// Milliseconds in one day; also the coarse bucket granularity for long retention windows.
 pub const DAILY_MS: u64 = 86_400_000;
 
 /// Soft ceiling on the number of live buckets before granularity auto-coarsens

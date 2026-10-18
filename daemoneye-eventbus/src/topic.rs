@@ -938,7 +938,7 @@ mod tests {
         let process_tree = TopicPattern::new("events.process.#").unwrap();
         assert!(registry.pattern_matches_restricted(&all));
         assert!(!registry.pattern_matches_restricted(&process));
-        // Covers the default restricted pattern `events.+.metadata`.
+        // Overlaps the default restricted pattern `events.+.metadata`.
         assert!(registry.pattern_matches_restricted(&process_tree));
     }
 

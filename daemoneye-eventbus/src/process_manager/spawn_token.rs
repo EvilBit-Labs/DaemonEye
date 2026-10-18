@@ -173,7 +173,9 @@ impl std::fmt::Debug for SpawnTokenStore {
 }
 
 impl SpawnTokenStore {
-    /// Open a store under `socket_directory`, in an owner-only `spawn-tokens` subdirectory.
+    /// Open a store keyed to `socket_directory`: on Unix an owner-only `spawn-tokens`
+    /// subdirectory of it, elsewhere a hash-named subdirectory of the account's local data
+    /// directory, owner-only as well.
     ///
     /// An existing token directory is checked rather than corrected: one that other accounts can
     /// already reach may already have been tampered with, so this refuses instead of tightening the

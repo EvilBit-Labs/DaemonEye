@@ -92,7 +92,7 @@ futures = "0.3.34"
 futures-util = "0.3.34"
 # Exact-pinned: ssdeep/CTPH fuzzy hash for binary-change detection. Pure-Rust,
 # FFI-free (no cmake/C build deps), MIT-licensed. Pinned because it produces
-# integrity-adjacent data. See AGENTS.md "Pin security-critical deps".
+# integrity-adjacent data. See AGENTS.md "Dependency Security".
 fuzzyhash = "=0.2.2"
 
 # System information and IPC
@@ -101,7 +101,7 @@ insta = { version = "1.48.0", features = ["filters"] }
 interprocess = { version = "2.4.3", features = ["tokio"] }
 # Exact-pinned: SMTP client for the email alert sink. Default features are off so
 # native-tls (OpenSSL) never enters the graph; TLS is rustls with the `ring`
-# provider the agent installs at startup. See AGENTS.md "Pin security-critical deps".
+# provider the agent installs at startup. See AGENTS.md "Dependency Security".
 lettre = { version = "=0.11.23", default-features = false, features = [
     "builder",
     "smtp-transport",
@@ -115,7 +115,7 @@ lettre = { version = "=0.11.23", default-features = false, features = [
 # "Pin security-critical deps".
 libc = "=0.2.190"
 # Least-recently-used cache backing the detection regex cache.
-# Exact-pinned per AGENTS.md "Pin security-critical deps" — KTD6 selects this
+# Exact-pinned per AGENTS.md "Dependency Security" — KTD6 selects this
 # crate specifically because its eviction policy is *strict* LRU, which R6
 # requires; a silent upstream policy change would dissolve that guarantee.
 lru = { version = "=0.18.5", default-features = false }
@@ -134,7 +134,7 @@ prost-build = "0.14.4"
 prost-types = "0.14.4"
 
 # Bounded in-memory cache (hash result store).
-# Exact-pinned per AGENTS.md "Pin security-critical deps" — this cache
+# Exact-pinned per AGENTS.md "Dependency Security" — this cache
 # holds authoritative hash results so a silent upstream change here
 # could affect integrity decisions.
 quick_cache = "=0.7.0"
@@ -144,13 +144,13 @@ rcgen = { version = "=0.13.2", default-features = false, features = ["ring", "pe
 # Exact-pinned: HTTP client for the webhook alert sink. `rustls-no-provider` (not
 # `rustls`, which hard-enables aws-lc-rs) plus the `ring` provider installed by the
 # agent; no HTTP/2, no system proxy, no charset decoding, no native-tls.
-# See AGENTS.md "Pin security-critical deps".
+# See AGENTS.md "Dependency Security".
 reqwest = { version = "=0.13.5", default-features = false, features = [
     "rustls-no-provider",
     "json",
 ] }
 # Exact-pinned: the TLS crypto provider every network sink uses; `ring` avoids the
-# aws-lc-rs build tooling (NASM on Windows). See AGENTS.md "Pin security-critical deps".
+# aws-lc-rs build tooling (NASM on Windows). See AGENTS.md "Dependency Security".
 ring = { version = "=0.17.14", default-features = false }
 
 # Database and storage
@@ -158,27 +158,27 @@ redb = "4.2.0"
 regex = "1.13.1"
 rs_merkle = "1.5.0"
 # Exact-pinned: the one TLS implementation in the workspace (TLS 1.2 floor, 1.3
-# preferred, no downgrade knob exposed). See AGENTS.md "Pin security-critical deps".
+# preferred, no downgrade knob exposed). See AGENTS.md "Dependency Security".
 rustls = { version = "=0.23.46", default-features = false, features = [
     "ring",
     "std",
     "tls12",
 ] }
 # Exact-pinned: OS trust-store verifier for rustls, offline-safe (no root download).
-# See AGENTS.md "Pin security-critical deps".
+# See AGENTS.md "Dependency Security".
 rustls-platform-verifier = "=0.7.1"
 
 # Platform-specific dependencies
 # macOS
 security-framework = "3.7.0"
 # Exact-pinned: zeroizing wrapper for sink credentials resolved from environment
-# variables. See AGENTS.md "Pin security-critical deps".
+# variables. See AGENTS.md "Dependency Security".
 secrecy = "=0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 # Exact-pinned: SHA-3 is a cryptographic primitive and must not change
-# silently under a caret update. See AGENTS.md "Pin security-critical deps".
+# silently under a caret update. See AGENTS.md "Dependency Security".
 sha3 = "=0.12.0"
 sqlparser = { version = "0.62.0", features = ["visitor"] }
 # Exact-pinned: constant-time primitive; a version bump must be reviewed, not absorbed.
@@ -203,7 +203,7 @@ tokio = { version = "=1.53.2", features = [
     "signal",
 ] }
 # Exact-pinned: async TLS over TCP for the syslog sink's RFC 5425 transport.
-# See AGENTS.md "Pin security-critical deps".
+# See AGENTS.md "Dependency Security".
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 tokio-test = "0.4.5"
 toml = "1.1.4+spec-1.1.0"

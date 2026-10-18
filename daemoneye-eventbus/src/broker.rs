@@ -715,7 +715,8 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
-    /// Send `message` to the raw subscribers among `subscribers`, dropping closed receivers
+    /// Send `message` to the raw subscribers among `subscribers`, dropping closed receivers;
+    /// returns how many received it.
     async fn deliver_raw(&self, subscribers: &[String], message: &Message) -> u64 {
         let mut raw_senders_guard = self.raw_subscriber_senders.lock().await;
         let mut raw_failed_senders = Vec::new();
@@ -873,6 +874,11 @@ impl DaemoneyeBroker {
     /// Authorized positively: a pattern is accepted only when a `Public` registry
     /// entry covers every topic it can match. Unregistered and `Privileged`
     /// topics are therefore refused, as is anything overlapping a restricted entry.
+    ///
+    /// # Errors
+    ///
+    /// [`EventBusError::AccessDenied`] for a pattern the registry does not admit, or the
+    /// pattern-parse error for one that is not a valid topic pattern.
     pub async fn subscribe_client(
         &self,
         client_id: &str,

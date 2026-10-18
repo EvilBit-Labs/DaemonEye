@@ -83,13 +83,13 @@ max_open_rows_per_sink = 10000
 dlq_max_redrives = 5           # 0..=100
 ```
 
-A transient failure (connection, timeout, HTTP 5xx, 408, 429, SMTP 4xx) is retried with exponential backoff and full jitter, never more than `max_backoff_secs` apart, up to `max_attempts`; a `Retry-After` given in seconds is honoured up to the same cap. A permanent failure (other HTTP 4xx, a rejected recipient) is not retried. After the attempts are spent the row is dead-lettered with its reason.
+A transient failure (connection, timeout, HTTP 5xx, 408, 429, SMTP 4xx, a UDP datagram the receiver refused) is retried with exponential backoff and full jitter, never more than `max_backoff_secs` apart, up to `max_attempts`; a `Retry-After` given in seconds is honoured up to the same cap, and `initial_backoff_ms` may not exceed `max_backoff_secs`. A permanent failure (other HTTP 4xx, a rejected recipient) is not retried. After the attempts are spent the row is dead-lettered with its reason, and every dead-letter transition is logged at warn with the sink, alert id, reason and error class.
 
-The breaker is per sink. It counts consecutive transient failures, opens at the threshold, admits one probe after the cool-down, and closes on a successful probe. While it is open no network call is made and new rows wait. Local sinks have no breaker.
+The breaker is per sink. It counts consecutive transient failures, opens at the threshold, admits one probe after the cool-down, and closes when the probe is answered: a success, or a permanent rejection, which proves the sink is up. While it is open no network call is made and new rows wait. Every breaker transition is logged at warn. Local sinks have no breaker.
 
-Dead letters are bounded per sink by `dlq_max_rows_per_sink`; the lowest-severity, oldest rows are evicted first and the eviction is counted. They are redriven automatically, a hundred at a time, once a tripped breaker has stayed closed for a full cool-down, and once at agent start, up to `dlq_max_redrives` per row.
+Dead letters are bounded per sink by `dlq_max_rows_per_sink`; the lowest-severity, oldest rows are evicted first and the eviction is counted and logged. They are redriven automatically, a hundred at a time, once a tripped breaker has stayed closed for a full cool-down, and once at agent start, up to `dlq_max_redrives` per row; a startup redrive that the open-row cap cut short continues as rows free up. With `dlq_max_redrives = 0` nothing is redriven and each row keeps its original reason.
 
-Open rows (pending or retrying) are capped per sink by `max_open_rows_per_sink`. At the cap a critical or high alert displaces the oldest lowest-severity pending row, which is dead-lettered as `queue_full`; any other alert is dead-lettered as `queue_full` itself. A flood of low-severity alerts therefore cannot keep a critical one off the wire.
+Open rows (pending or retrying) are capped per sink by `max_open_rows_per_sink`. At the cap a critical or high alert displaces the oldest lowest-severity pending row, which is dead-lettered as `queue_full`; otherwise (including a high or critical alert with no lower-severity pending row to displace) the new row is dead-lettered as `queue_full`. A flood of low-severity alerts therefore cannot keep a critical one off the wire.
 
 The rate limit `alerting.max_alerts_per_minute` paces delivery; it never drops an alert.
 
@@ -103,14 +103,16 @@ Delivery is at least once. A crash between a sink accepting an alert and the row
 | syslog  | MSGID (alert id without hyphens)    | `dedup` structured-data param  |
 | email   | `Message-ID` `<alert-id@daemoneye>` | `X-DaemonEye-Dedup-Key` header |
 
-A deduplication key is sent as is when it is printable ASCII (no `"`, `\\` or `]`) and fits the field: 96 bytes in syslog structured data, 256 in the webhook header. Any other key is sent as `sha256:` followed by the hex SHA-256 of the whole key, so distinct keys never share a wire value.
+In webhook and syslog, a deduplication key is sent as is when it is printable ASCII (no `"`, `\` or `]`) and fits the field: 96 bytes in syslog structured data, 256 in the webhook header. Any other key is sent as `sha256:` followed by the hex SHA-256 of the whole key, so distinct keys never share a wire value. The email header carries the key with control characters stripped.
 
-Within the agent, a duplicate inside `alerting.dedup_window_seconds` of a persisted alert with the same deduplication key is stored with `suppressed_duplicate` rows and not sent. The window starts when the earlier alert's rows are written, not when a sink accepts it, and it is rebuilt at startup from stored alerts that have at least one non-suppressed delivery row (pending, retrying, delivered or dead-lettered).
+Within the agent, a duplicate inside `alerting.dedup_window_seconds` of a persisted alert with the same deduplication key is stored with `suppressed_duplicate` rows and not sent. The window starts at the enqueue time recorded in the earlier alert's rows, not when a sink accepts it, and it is rebuilt at startup from stored alerts that have at least one non-suppressed delivery row (pending, retrying, delivered or dead-lettered).
+
+The announcement on `events.alert.new` goes through a bounded in-process queue. When the queue is full, or announcements are still queued at shutdown, the announcement is dropped and counted as a publish failure; delivery is unaffected, because the workers deliver from the stored rows.
 
 ## Persistence and health
 
-If storing an alert fails, it is delivered once, directly, to local sinks only, marked `not_persisted` in its context, and counted in health. Nothing unpersisted reaches a network sink.
+If storing an alert fails, it is delivered once, directly, to local sinks only, marked `not_persisted` in its context, and counted in health. Nothing unpersisted reaches a network sink; with no local sink configured the loss is logged.
 
 Every delivery row records state, reason, severity, attempts, redrives, the last error class, enqueue and next-attempt times, and the terminal time. Terminal rows older than `database.retention_days` are pruned by an hourly sweep; alert rows are never pruned.
 
-The agent logs delivery health periodically: per sink the breaker state, consecutive failures, attempts, deliveries, a success rate over the last hundred attempts, dead-letter depth, evictions, queue-full drops, corrupt rows, the age of the oldest pending row, the last error class and the last success time; plus store and publish failure counts. The aggregate is `degraded` when network sinks fail and every local sink still delivers, and `unhealthy` when a local sink fails or the store does. The operator CLI surface for this data is a later milestone.
+The agent logs delivery health periodically, at warn when anything is unhealthy: per sink the breaker state, consecutive failures, whether the sink is failing, attempts, deliveries, a success rate over the last hundred attempts, dead-letter depth, evictions, queue-full drops, corrupt rows, the age of the oldest pending row, the last error class and the last success time; plus store, publish and unpersisted-alert counts. A sink is unhealthy when its breaker is not closed, it is misconfigured, its failures since the last success (of any class, permanent rejections included) have reached `breaker_failure_threshold` (one failure for a local sink), or it has rows the worker cannot decode. The aggregate is `degraded` when a network sink is unhealthy and every local sink still delivers, and `unhealthy` when a local sink is unhealthy or the store is failing. A sink worker that panics is logged at error and restarted after a tick. The operator CLI surface for this data is a later milestone.

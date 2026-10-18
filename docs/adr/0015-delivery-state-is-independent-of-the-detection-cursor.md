@@ -4,7 +4,7 @@
 
 ## Context
 
-A detection cycle stores its alerts and advances the evaluated-through mark once every alert of the cycle is stored (ADR-0014). Before this decision the agent also delivered each alert inline, in the cycle loop, with no retry and no record of the outcome. An outage of every sink lost the external notification while the store said the cycle had completed, and a retry budget of up to 60 s per attempt could not live in the cycle without stalling detection.
+A detection cycle stores its alerts and advances the evaluated-through mark once every alert of the cycle is stored (ADR-0014). Before this decision the agent also delivered each alert inline, in the cycle loop, with no retry and no record of the outcome. An outage of every sink lost the external notification while the store said the cycle had completed, and a backoff of up to 60 s and an attempt timeout of up to 120 s could not live in the cycle without stalling detection.
 
 Requirement 5 asks for network sinks, a circuit breaker, bounded retries, a dead-letter queue and publication on the embedded broker. Something has to hold delivery state across attempts, restarts and outages, and something has to decide whether the detection cursor waits for it.
 
@@ -34,7 +34,7 @@ The stored row is the source of truth. The eventbus message published on `events
 
 - An alert is stored once and delivered at least once per sink; an outage of every sink parks rows that are retried and dead-lettered with a reason, and the dead letters are redriven in bounded batches when the sink recovers.
 - Delivery attempts are auditable per sink and alert without touching procmond's audit ledger.
-- A failing or slow sink costs the cycle only its own enqueue.
+- A failing or slow sink costs the cycle nothing beyond writing its delivery row.
 
 ### Negative
 
