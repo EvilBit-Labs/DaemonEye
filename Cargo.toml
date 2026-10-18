@@ -159,7 +159,7 @@ regex = "1.13.1"
 rs_merkle = "1.5.0"
 # Exact-pinned: the one TLS implementation in the workspace (TLS 1.2 floor, 1.3
 # preferred, no downgrade knob exposed). See AGENTS.md "Pin security-critical deps".
-rustls = { version = "=0.23.45", default-features = false, features = [
+rustls = { version = "=0.23.46", default-features = false, features = [
     "ring",
     "std",
     "tls12",
