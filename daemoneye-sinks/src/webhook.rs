@@ -12,21 +12,30 @@ use daemoneye_lib::alerting::{
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::Alert;
 use reqwest::header::{HeaderName, HeaderValue, RETRY_AFTER};
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use std::time::{Duration, Instant};
 
 const MAX_RETRY_AFTER: Duration = Duration::from_hours(1);
 const MAX_KEY_HEADER_CHARS: usize = 256;
 const ALERT_ID_HEADER: &str = "x-daemoneye-alert-id";
 const DEDUP_KEY_HEADER: &str = "x-daemoneye-dedup-key";
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// A webhook sink holding one client and a prebuilt, sensitive auth header.
+/// How each request authenticates; header values are built once and marked sensitive.
+enum Auth {
+    None,
+    Header(HeaderName, HeaderValue),
+    Basic {
+        username: SecretString,
+        password: SecretString,
+    },
+}
+
+/// A webhook sink holding one client and its auth.
 pub struct WebhookSink {
     name: String,
     url: reqwest::Url,
     client: reqwest::Client,
-    auth: Option<(HeaderName, HeaderValue)>,
+    auth: Auth,
     flags: IncludeFlags,
 }
 
@@ -38,34 +47,6 @@ impl std::fmt::Debug for WebhookSink {
     }
 }
 
-/// Standard padded base64; only for the basic-auth credential.
-fn base64(input: &[u8]) -> String {
-    let symbol = |index: u32| {
-        char::from(
-            BASE64
-                .get(usize::try_from(index & 63).unwrap_or(0))
-                .copied()
-                .unwrap_or(b'A'),
-        )
-    };
-    let mut out = String::new();
-    for chunk in input.chunks(3) {
-        let b0 = u32::from(chunk.first().copied().unwrap_or(0));
-        let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
-        let b2 = u32::from(chunk.get(2).copied().unwrap_or(0));
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(symbol(triple >> 18));
-        out.push(symbol(triple >> 12));
-        out.push(if chunk.len() > 1 {
-            symbol(triple >> 6)
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 { symbol(triple) } else { '=' });
-    }
-    out
-}
-
 fn sensitive(value: &str) -> Result<HeaderValue, AlertingError> {
     let mut header = HeaderValue::from_str(value)
         .map_err(|_invalid| config_error("webhook credential is not a valid header value"))?;
@@ -73,15 +54,12 @@ fn sensitive(value: &str) -> Result<HeaderValue, AlertingError> {
     Ok(header)
 }
 
-/// The auth header for the spec's scheme; the resolver shaped the credentials to match it.
+/// The auth for the spec's scheme; the resolver shaped the credentials to match it.
 #[allow(
     clippy::wildcard_enum_match_arm,
     reason = "WebhookAuth is non_exhaustive"
 )]
-fn auth_header(
-    spec: &WebhookSpec,
-    resolved: &ResolvedSink,
-) -> Result<Option<(HeaderName, HeaderValue)>, AlertingError> {
+fn auth_of(spec: &WebhookSpec, resolved: &ResolvedSink) -> Result<Auth, AlertingError> {
     let mismatch = || config_error("webhook credentials do not match its auth scheme");
     let token = || match resolved.credentials {
         Credentials::Token(ref token) => Ok(token.expose_secret()),
@@ -89,24 +67,21 @@ fn auth_header(
     };
     match spec.auth {
         WebhookAuth::None => match resolved.credentials {
-            Credentials::None => Ok(None),
+            Credentials::None => Ok(Auth::None),
             Credentials::Token(_) | Credentials::Basic { .. } => Err(mismatch()),
         },
-        WebhookAuth::Bearer => Ok(Some((
+        WebhookAuth::Bearer => Ok(Auth::Header(
             reqwest::header::AUTHORIZATION,
             sensitive(&format!("Bearer {}", token()?))?,
-        ))),
+        )),
         WebhookAuth::Basic => match resolved.credentials {
             Credentials::Basic {
                 ref username,
                 ref password,
-            } => {
-                let pair = format!("{}:{}", username.expose_secret(), password.expose_secret());
-                Ok(Some((
-                    reqwest::header::AUTHORIZATION,
-                    sensitive(&format!("Basic {}", base64(pair.as_bytes())))?,
-                )))
-            }
+            } => Ok(Auth::Basic {
+                username: username.clone(),
+                password: password.clone(),
+            }),
             Credentials::None | Credentials::Token(_) => Err(mismatch()),
         },
         WebhookAuth::Header => {
@@ -117,7 +92,7 @@ fn auth_header(
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_invalid| {
                 config_error("webhook header_name is not a valid header name")
             })?;
-            Ok(Some((header_name, sensitive(token()?)?)))
+            Ok(Auth::Header(header_name, sensitive(token()?)?))
         }
         _ => Err(config_error("unsupported webhook auth scheme")),
     }
@@ -180,10 +155,10 @@ impl WebhookSink {
         let url = reqwest::Url::parse(&spec.url)
             .map_err(|_invalid| config_error("webhook url does not parse"))?;
         Ok(Self {
-            name: spec.name.clone(),
+            name: spec.name.as_str().to_owned(),
             url,
             client: build_client(spec)?,
-            auth: auth_header(spec, resolved)?,
+            auth: auth_of(spec, resolved)?,
             flags: IncludeFlags {
                 command_line: spec.include_command_line,
                 user: spec.include_user,
@@ -194,8 +169,13 @@ impl WebhookSink {
     fn request(&self, method: reqwest::Method) -> reqwest::RequestBuilder {
         let builder = self.client.request(method, self.url.clone());
         match self.auth {
-            Some((ref name, ref value)) => builder.header(name.clone(), value.clone()),
-            None => builder,
+            Auth::None => builder,
+            Auth::Header(ref name, ref value) => builder.header(name.clone(), value.clone()),
+            // reqwest encodes the pair and marks the header sensitive.
+            Auth::Basic {
+                ref username,
+                ref password,
+            } => builder.basic_auth(username.expose_secret(), Some(password.expose_secret())),
         }
     }
 }

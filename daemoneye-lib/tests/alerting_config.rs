@@ -122,13 +122,16 @@ fn initial_backoff_may_not_exceed_the_backoff_ceiling() {
 }
 
 #[test]
-fn duplicate_names_and_separator_in_names_are_rejected() {
+fn duplicate_empty_and_control_character_names_are_rejected() {
     let stdout = |name: &str| sink("stdout", true, json!({"name": name}));
     let msg = failure(&with_sinks(vec![stdout("ops"), stdout("ops")]));
     assert!(msg.contains("ops") && msg.contains("duplicate"), "{msg}");
 
     let separator = failure(&with_sinks(vec![stdout("a\u{1f}b")]));
-    assert!(separator.contains("alerting.sinks"), "{separator}");
+    assert!(separator.contains("control character"), "{separator}");
+
+    let empty = failure(&with_sinks(vec![stdout("")]));
+    assert!(empty.contains("empty"), "{empty}");
 }
 
 #[test]

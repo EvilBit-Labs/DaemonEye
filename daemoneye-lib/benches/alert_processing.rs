@@ -20,7 +20,6 @@ use daemoneye_lib::storage::EventStore;
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use tokio::sync::watch;
 
 /// Mock alert sink for benchmarking
 #[derive(Debug, Clone)]
@@ -159,17 +158,15 @@ fn bench_alert_creation(c: &mut Criterion) {
     group.finish();
 }
 
-/// A started manager over a temp store; the guards keep the store and the cancellation alive.
+/// A started manager over a temp store; the guard keeps the store alive.
 struct Rig {
     _dir: tempfile::TempDir,
-    _cancel: watch::Sender<bool>,
     manager: AlertManager,
 }
 
 fn start_rig(rt: &Runtime, sinks: &[MockAlertSink]) -> Rig {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(EventStore::new(dir.path().join("bench.redb")).unwrap());
-    let (cancel, cancel_rx) = watch::channel(false);
     let boxed: Vec<Box<dyn AlertSink>> = sinks
         .iter()
         .map(|sink| Box::new(sink.clone()) as Box<dyn AlertSink>)
@@ -180,14 +177,9 @@ fn start_rig(rt: &Runtime, sinks: &[MockAlertSink]) -> Rig {
             boxed,
             &AlertingConfig::default(),
             Arc::new(NoopPublisher),
-            cancel_rx,
         ))
         .unwrap();
-    Rig {
-        _dir: dir,
-        _cancel: cancel,
-        manager,
-    }
+    Rig { _dir: dir, manager }
 }
 
 /// An alert whose deduplication key is unique to `i`, so none is suppressed.

@@ -16,14 +16,12 @@
 
 mod support;
 
-use daemoneye_agent::alert_publisher::{
-    BrokerPublisher, masked_projection, shutdown_alert_delivery, spawn_wake_subscriber,
-};
+use daemoneye_agent::alert_publisher::{BrokerPublisher, masked_projection};
 use daemoneye_agent::alert_sinks::{DEFAULT_SINK_NAME, build_sinks};
 use daemoneye_agent::detection_cycle::{enrich_and_enqueue, run_retention_sweep};
 use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_lib::alerting::{
-    AlertManager, CredentialResolver, DeliveryAggregate, NoopPublisher, SHUTDOWN_DRAIN,
+    AlertManager, CredentialResolver, DeliveryAggregate, SHUTDOWN_DRAIN,
 };
 use daemoneye_lib::config::{AlertSinkConfig, AlertingConfig, DeliveryConfig};
 use daemoneye_lib::models::{DeliveryReason, DeliveryState, Uuid};
@@ -110,7 +108,7 @@ fn an_unknown_sink_type_is_refused_not_dropped() {
 async fn an_alert_enqueued_through_the_cycle_is_stored_enriched() {
     let (dir, store) = temp_store();
     let config = alerting(vec![file_sink(&dir.path().join("out.log"))]);
-    let (manager, _cancel) = start_manager(&store, &config).await;
+    let manager = start_manager(&store, &config).await;
     let raised = alert("enrich-me");
 
     let persisted =
@@ -159,7 +157,7 @@ async fn a_store_failure_delivers_once_to_local_sinks_marked_not_persisted() {
     let out = dir.path().join("out.log");
     let config = alerting(vec![webhook_sink(&mock.url()), file_sink(&out)]);
     let store = broken_alerts_store(dir.path());
-    let (manager, _cancel) = start_manager(&store, &config).await;
+    let manager = start_manager(&store, &config).await;
     let raised = alert("store-down");
 
     let persisted =
@@ -196,7 +194,7 @@ async fn control_the_same_alert_raised_against_a_healthy_store_is_enqueued_and_d
     let config = alerting(vec![webhook_sink(&mock.url()), file_sink(&out)]);
     let (_healthy_dir, store, next_cycle) = {
         let broken = broken_alerts_store(dir.path());
-        let (manager, _cancel) = start_manager(&broken, &config).await;
+        let manager = start_manager(&broken, &config).await;
         let first = enrich_and_enqueue(&broken, &manager, &[alert("store-down")], &ctx()).await;
         assert_eq!(first, 0);
         manager.shutdown(SHUTDOWN_DRAIN).await;
@@ -205,7 +203,7 @@ async fn control_the_same_alert_raised_against_a_healthy_store_is_enqueued_and_d
     };
     let healthy_out = dir.path().join("healthy.log");
     let config = alerting(vec![webhook_sink(&mock.url()), file_sink(&healthy_out)]);
-    let (manager, _cancel) = start_manager(&store, &config).await;
+    let manager = start_manager(&store, &config).await;
 
     let persisted =
         enrich_and_enqueue(&store, &manager, std::slice::from_ref(&next_cycle), &ctx()).await;
@@ -250,7 +248,7 @@ async fn a_row_left_retrying_by_shutdown_is_redelivered_with_the_same_identity_a
         (s, d)
     };
     let raised = alert("restart-me");
-    let (first, cancel) = start_manager(&store, &slow).await;
+    let first = start_manager(&store, &slow).await;
     assert_eq!(
         enrich_and_enqueue(&store, &first, std::slice::from_ref(&raised), &ctx()).await,
         1
@@ -258,7 +256,6 @@ async fn a_row_left_retrying_by_shutdown_is_redelivered_with_the_same_identity_a
     assert!(wait_until(DEADLINE, || mock.requests().len() == 1).await);
 
     first.shutdown(SHUTDOWN_DRAIN).await;
-    drop(cancel);
 
     let mid = row(&store, WEBHOOK, raised.id);
     assert_eq!(
@@ -269,7 +266,7 @@ async fn a_row_left_retrying_by_shutdown_is_redelivered_with_the_same_identity_a
     assert_eq!(mid.attempts, 1);
     assert_eq!(mock.requests().len(), 1, "precondition: no second send yet");
 
-    let (second, _cancel2) = start_manager(&store, &config).await;
+    let second = start_manager(&store, &config).await;
     assert!(
         wait_until(DEADLINE, || row(&store, WEBHOOK, raised.id).state
             == DeliveryState::Delivered)
@@ -368,8 +365,7 @@ async fn broker(dir: &tempfile::TempDir) -> Arc<DaemoneyeBroker> {
 }
 
 #[tokio::test]
-async fn shutdown_returns_within_the_drain_with_a_send_in_flight_and_drops_the_subscription_first()
-{
+async fn shutdown_returns_within_the_drain_with_a_send_in_flight() {
     let dir = tempfile::tempdir().unwrap();
     let mock = MockHttp::start(vec![Response::Hang]).await;
     let mut config = alerting(vec![webhook_sink(&mock.url())]);
@@ -379,21 +375,14 @@ async fn shutdown_returns_within_the_drain_with_a_send_in_flight_and_drops_the_s
         (s, d)
     };
     let broker = broker(&dir).await;
-    let (cancel, cancel_rx) = tokio::sync::watch::channel(false);
-    let manager = Arc::new(
-        AlertManager::start(
-            Arc::clone(&store),
-            build_sinks(&config, &resolver()).unwrap(),
-            &config,
-            Arc::new(BrokerPublisher::new(Arc::clone(&broker), masked_projection)),
-            cancel_rx,
-        )
-        .await
-        .unwrap(),
-    );
-    let wake = spawn_wake_subscriber(Arc::clone(&broker), Arc::clone(&manager))
-        .await
-        .unwrap();
+    let manager = AlertManager::start(
+        Arc::clone(&store),
+        build_sinks(&config, &resolver()).unwrap(),
+        &config,
+        Arc::new(BrokerPublisher::new(Arc::clone(&broker), masked_projection)),
+    )
+    .await
+    .unwrap();
     let raised = alert("in-flight");
     assert_eq!(
         enrich_and_enqueue(&store, &manager, std::slice::from_ref(&raised), &ctx()).await,
@@ -403,15 +392,10 @@ async fn shutdown_returns_within_the_drain_with_a_send_in_flight_and_drops_the_s
         wait_until(DEADLINE, || mock.requests().len() == 1).await,
         "send never started"
     );
-    assert_eq!(
-        broker.statistics().await.active_subscribers,
-        1,
-        "precondition: subscribed"
-    );
     let drain = Duration::from_millis(300);
 
     let started = Instant::now();
-    shutdown_alert_delivery(&manager, Some(wake), drain).await;
+    manager.shutdown(drain).await;
     let elapsed = started.elapsed();
 
     assert!(
@@ -420,36 +404,5 @@ async fn shutdown_returns_within_the_drain_with_a_send_in_flight_and_drops_the_s
     );
     let stuck = row(&store, WEBHOOK, raised.id);
     assert_eq!((stuck.state, stuck.attempts), (DeliveryState::Retrying, 1));
-    assert_eq!(
-        broker.statistics().await.active_subscribers,
-        0,
-        "the subscription is gone while the broker is still up"
-    );
     broker.shutdown().await.unwrap();
-    drop(cancel);
-}
-
-#[tokio::test]
-async fn control_without_shutdown_the_subscription_stays() {
-    let dir = tempfile::tempdir().unwrap();
-    let (_d, store) = temp_store();
-    let broker = broker(&dir).await;
-    let (_cancel, cancel_rx) = tokio::sync::watch::channel(false);
-    let manager = Arc::new(
-        AlertManager::start(
-            store,
-            Vec::new(),
-            &AlertingConfig::default(),
-            Arc::new(NoopPublisher),
-            cancel_rx,
-        )
-        .await
-        .unwrap(),
-    );
-    let _wake = spawn_wake_subscriber(Arc::clone(&broker), Arc::clone(&manager))
-        .await
-        .unwrap();
-
-    assert_eq!(broker.statistics().await.active_subscribers, 1);
-    manager.shutdown(SHUTDOWN_DRAIN).await;
 }

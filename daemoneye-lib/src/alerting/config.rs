@@ -7,16 +7,60 @@
 
 use crate::alerting::OutputFormat;
 use crate::config::{AlertSinkConfig, AlertingConfig, ConfigError, ConfigLoader, check_range};
-use crate::storage::DELIVERY_KEY_SEP;
 use secrecy::SecretString;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 const KNOWN_SINK_TYPES: [&str; 5] = ["stdout", "file", "webhook", "syslog", "email"];
 const PEM_CERTIFICATE_MARKER: &[u8] = b"-----BEGIN CERTIFICATE-----";
 const REDACTED: &str = "[REDACTED]";
+
+/// A sink's name: non-empty, no control characters.
+///
+/// The delivery key is `sink U+001F alert id`, so a name that passed here can never collide with
+/// the separator. Uniqueness across the config is checked when the config is validated.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
+pub struct SinkName(String);
+
+impl SinkName {
+    /// The name as text.
+    #[must_use]
+    pub const fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl TryFrom<String> for SinkName {
+    type Error = &'static str;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        if name.is_empty() {
+            return Err("sink name is empty");
+        }
+        if name.chars().any(char::is_control) {
+            return Err("sink name has a control character");
+        }
+        Ok(Self(name))
+    }
+}
+
+impl FromStr for SinkName {
+    type Err = &'static str;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::try_from(name.to_owned())
+    }
+}
+
+impl Display for SinkName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 const TIMEOUT_SECS_MIN: u64 = 1;
 const TIMEOUT_SECS_MAX: u64 = 120;
@@ -93,7 +137,7 @@ pub enum EmailTls {
 #[serde(deny_unknown_fields)]
 pub struct StdoutSpec {
     /// Unique sink name.
-    pub name: String,
+    pub name: SinkName,
     /// Output format.
     #[serde(default = "default_format")]
     pub format: OutputFormat,
@@ -104,7 +148,7 @@ pub struct StdoutSpec {
 #[serde(deny_unknown_fields)]
 pub struct FileSpec {
     /// Unique sink name.
-    pub name: String,
+    pub name: SinkName,
     /// Destination file.
     pub path: PathBuf,
     /// Output format.
@@ -117,7 +161,7 @@ pub struct FileSpec {
 #[serde(deny_unknown_fields)]
 pub struct WebhookSpec {
     /// Unique sink name.
-    pub name: String,
+    pub name: SinkName,
     /// Endpoint URL, without user-info, query or fragment.
     pub url: String,
     /// Authentication scheme.
@@ -158,7 +202,7 @@ pub struct WebhookSpec {
 #[serde(deny_unknown_fields)]
 pub struct SyslogSpec {
     /// Unique sink name.
-    pub name: String,
+    pub name: SinkName,
     /// Transport.
     pub transport: SyslogTransport,
     /// `host:port`, or a socket path for `unix`.
@@ -192,7 +236,7 @@ pub struct SyslogSpec {
 #[serde(deny_unknown_fields)]
 pub struct EmailSpec {
     /// Unique sink name.
-    pub name: String,
+    pub name: SinkName,
     /// SMTP host.
     pub host: String,
     /// SMTP port.
@@ -241,7 +285,7 @@ pub enum SinkSpec {
 impl SinkSpec {
     /// The sink's unique name.
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub const fn name(&self) -> &SinkName {
         match *self {
             Self::Stdout(ref s) => &s.name,
             Self::File(ref s) => &s.name,
@@ -327,12 +371,8 @@ impl AlertingConfig {
             }
             let spec = parse_at(index, sink)?;
             let name = spec.name();
-            // The delivery key is `sink U+001F alert id`, so the separator cannot be in a name.
-            if name.contains(DELIVERY_KEY_SEP) {
-                return Err(invalid(name, "name must not contain U+001F"));
-            }
-            if !seen.insert(name.to_owned()) {
-                return Err(invalid(name, "duplicate sink name"));
+            if !seen.insert(name.clone()) {
+                return Err(invalid(name.as_str(), "duplicate sink name"));
             }
             spec.validate()?;
         }
@@ -341,7 +381,7 @@ impl AlertingConfig {
 }
 
 fn validate_webhook(w: &WebhookSpec) -> Result<(), ConfigError> {
-    let name = &w.name;
+    let name = w.name.as_str();
     check_range(
         &format!("alerting.sinks[{name}].timeout_secs"),
         &w.timeout_secs,
@@ -434,7 +474,7 @@ fn is_loopback(host: &str) -> bool {
 }
 
 fn validate_syslog(s: &SyslogSpec) -> Result<(), ConfigError> {
-    let name = &s.name;
+    let name = s.name.as_str();
     check_range(
         &format!("alerting.sinks[{name}].max_message_bytes"),
         &s.max_message_bytes,
@@ -477,11 +517,14 @@ fn validate_syslog(s: &SyslogSpec) -> Result<(), ConfigError> {
 
 fn validate_email(e: &EmailSpec) -> Result<(), ConfigError> {
     if e.to.is_empty() {
-        return Err(invalid(&e.name, "to must list at least one recipient"));
+        return Err(invalid(
+            e.name.as_str(),
+            "to must list at least one recipient",
+        ));
     }
     if e.username_env.is_some() != e.password_env.is_some() {
         return Err(invalid(
-            &e.name,
+            e.name.as_str(),
             "username_env and password_env must be set together",
         ));
     }
@@ -535,7 +578,7 @@ impl CredentialResolver {
     /// Returns [`ConfigError::ValidationError`] naming the sink and the variable (never its
     /// value) when a required variable is unnamed, unset or empty.
     pub fn resolve(&self, spec: &SinkSpec) -> Result<ResolvedSink, ConfigError> {
-        let name = spec.name();
+        let name = spec.name().as_str();
         let credentials = match *spec {
             SinkSpec::Webhook(ref w) => match w.auth {
                 WebhookAuth::None => Credentials::None,

@@ -277,13 +277,11 @@ async fn persisted_alerts_keep_their_completeness() {
         ),
     ];
 
-    let (_cancel, cancel_rx) = tokio::sync::watch::channel(false);
     let manager = AlertManager::start(
         Arc::clone(&fx.store),
         Vec::new(),
         &AlertingConfig::default(),
         Arc::new(NoopPublisher),
-        cancel_rx,
     )
     .await
     .unwrap();

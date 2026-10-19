@@ -16,7 +16,7 @@ mod health;
 pub mod reliability;
 mod render;
 
-pub use config::{CredentialResolver, Credentials, ResolvedSink, SinkSpec, host_of};
+pub use config::{CredentialResolver, Credentials, ResolvedSink, SinkName, SinkSpec, host_of};
 pub use delivery::{
     AlertManager, AlertPublisher, EnqueueOutcome, NoopPublisher, PublishError, REDRIVE_BATCH,
     SHUTDOWN_DRAIN,

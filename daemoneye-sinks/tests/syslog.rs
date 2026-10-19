@@ -46,7 +46,7 @@ fn delivery() -> DeliveryConfig {
 
 fn spec(transport: SyslogTransport, address: &str) -> SyslogSpec {
     SyslogSpec {
-        name: "syslog-a".to_owned(),
+        name: "syslog-a".parse().unwrap(),
         transport,
         address: address.to_owned(),
         facility: "daemon".to_owned(),

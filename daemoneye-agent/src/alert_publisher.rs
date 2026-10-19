@@ -1,16 +1,12 @@
-//! Announces stored alerts on `events.alert.new` and wakes the delivery workers from it.
+//! Announces stored alerts on `events.alert.new`.
 
-use anyhow::Context;
 use async_trait::async_trait;
 use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_eventbus::topics::alert;
-use daemoneye_lib::alerting::{AlertManager, AlertPublisher, PublishError};
+use daemoneye_lib::alerting::{AlertPublisher, PublishError};
 use daemoneye_lib::alerting::{ExternalAlert, IncludeFlags};
 use daemoneye_lib::models::Alert;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::task::JoinHandle;
-use uuid::Uuid;
 
 /// Serialises an alert for the bus; the caller owns what it exposes. A failure is a publish
 /// failure, never an empty payload.
@@ -48,60 +44,6 @@ impl AlertPublisher for BrokerPublisher {
             .publish(alert::NEW, &alert.id.to_string(), payload)
             .await
             .map_err(|error| PublishError::new(error.to_string()))
-    }
-}
-
-/// Wakes every sink worker on each message published to [`alert::NEW`].
-pub struct WakeSubscriber {
-    broker: Arc<DaemoneyeBroker>,
-    id: Uuid,
-    task: JoinHandle<()>,
-}
-
-/// Subscribe to [`alert::NEW`] in-process and call `manager.wake_all()` per message.
-///
-/// # Errors
-///
-/// The broker refused the subscription.
-pub async fn spawn_wake_subscriber(
-    broker: Arc<DaemoneyeBroker>,
-    manager: Arc<AlertManager>,
-) -> anyhow::Result<WakeSubscriber> {
-    let id = Uuid::new_v4();
-    let mut rx = broker
-        .subscribe_raw(alert::NEW, id)
-        .await
-        .context("subscribing the alert wake signal")?;
-    let task = tokio::spawn(async move {
-        while rx.recv().await.is_some() {
-            manager.wake_all();
-        }
-    });
-    Ok(WakeSubscriber { broker, id, task })
-}
-
-impl WakeSubscriber {
-    /// Stop the task and drop the subscription.
-    pub async fn shutdown(self) {
-        self.task.abort();
-        if let Err(error) = self.broker.unsubscribe(self.id).await {
-            tracing::warn!(%error, "alert wake unsubscribe failed");
-        }
-    }
-}
-
-/// Stop alert delivery ahead of the bus.
-///
-/// Workers get `drain` to finish in-flight sends (the rest stay `Retrying` for the next start),
-/// then the wake subscription is dropped. The caller shuts the broker down afterwards.
-pub async fn shutdown_alert_delivery(
-    manager: &AlertManager,
-    wake: Option<WakeSubscriber>,
-    drain: Duration,
-) {
-    manager.shutdown(drain).await;
-    if let Some(subscriber) = wake {
-        subscriber.shutdown().await;
     }
 }
 

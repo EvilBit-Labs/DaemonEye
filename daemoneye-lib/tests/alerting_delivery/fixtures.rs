@@ -24,7 +24,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
-use tokio::sync::watch;
 use tokio::time::Instant;
 
 /// What a scripted sink does with one send.
@@ -189,7 +188,6 @@ pub struct Rig {
     pub _dir: Option<TempDir>,
     pub store: Arc<EventStore>,
     pub manager: AlertManager,
-    pub cancel: watch::Sender<bool>,
 }
 
 pub fn temp_store() -> (TempDir, Arc<EventStore>) {
@@ -262,22 +260,14 @@ pub async fn rig_publishing(
     alerting: AlertingConfig,
     publisher: Arc<dyn AlertPublisher>,
 ) -> Rig {
-    let (cancel, cancel_rx) = watch::channel(false);
-    let manager = AlertManager::start_with_rng_seed(
-        Arc::clone(&store),
-        sinks,
-        &alerting,
-        publisher,
-        cancel_rx,
-        SEED,
-    )
-    .await
-    .unwrap();
+    let manager =
+        AlertManager::start_with_rng_seed(Arc::clone(&store), sinks, &alerting, publisher, SEED)
+            .await
+            .unwrap();
     Rig {
         _dir: None,
         store,
         manager,
-        cancel,
     }
 }
 

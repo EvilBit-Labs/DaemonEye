@@ -12,7 +12,7 @@ Requirement 5 asks for network sinks, a circuit breaker, bounded retries, a dead
 
 Delivery state lives in an agent-owned `alert_deliveries` table, one row per alert and sink, written in the same transaction as the alert. Per-sink workers deliver from those rows with a circuit breaker and a retry budget, and the detection cursor never depends on delivery: it advances when the cycle's alerts are stored, exactly as before.
 
-The stored row is the source of truth. The eventbus message published on `events.alert.new` is fan-out and a wake signal for the workers; a periodic tick claims any row the bus did not announce.
+The stored row is the source of truth. The eventbus message published on `events.alert.new` is fan-out only: the manager wakes its workers once the row is committed, and a periodic tick claims any row a wake missed.
 
 ## Alternatives Considered
 

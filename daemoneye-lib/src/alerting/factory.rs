@@ -41,11 +41,11 @@ impl AlertSinkFactory {
     ) -> Result<Box<dyn AlertSink>, AlertingError> {
         match resolved.spec {
             SinkSpec::Stdout(ref spec) => Ok(Box::new(StdoutSink::new(
-                spec.name.clone(),
+                spec.name.as_str().to_owned(),
                 spec.format.clone(),
             ))),
             SinkSpec::File(ref spec) => Ok(Box::new(FileSink::new(
-                spec.name.clone(),
+                spec.name.as_str().to_owned(),
                 spec.path.clone(),
                 spec.format.clone(),
             ))),
@@ -53,7 +53,7 @@ impl AlertSinkFactory {
                 || {
                     Err(AlertingError::ConfigurationError(format!(
                         "no builder registered for network sink {:?}",
-                        resolved.spec.name()
+                        resolved.spec.name().as_str()
                     )))
                 },
                 |builder| builder.build(resolved, delivery),

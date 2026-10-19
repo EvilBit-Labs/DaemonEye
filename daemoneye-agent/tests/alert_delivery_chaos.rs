@@ -70,7 +70,7 @@ async fn a_network_partition_leaves_local_sinks_delivering_and_only_degrades_hea
         file_sink(&out),
     ]);
     mock.close().await;
-    let (manager, _cancel) = start_manager(&store, &config).await;
+    let manager = start_manager(&store, &config).await;
 
     let ids = run_batches(&store, &manager, &out).await;
 
@@ -117,7 +117,7 @@ async fn control_with_the_listener_up_everything_delivers_and_health_is_healthy(
     let out = dir.path().join("out.log");
     let mock = MockHttp::start(Vec::new()).await;
     let config = alerting(vec![webhook_sink(&mock.url()), file_sink(&out)]);
-    let (manager, _cancel) = start_manager(&store, &config).await;
+    let manager = start_manager(&store, &config).await;
 
     let ids = run_batches(&store, &manager, &out).await;
 
@@ -154,7 +154,7 @@ async fn a_hung_sink_and_a_busy_store_do_not_stall_the_runtime() {
         webhook_sink(&mock.url()),
         file_sink(&dir.path().join("out.log")),
     ]);
-    let (manager, _cancel) = start_manager(&store, &config).await;
+    let manager = start_manager(&store, &config).await;
     let stamps = Arc::new(Mutex::new(vec![Instant::now()]));
     let ticker = {
         let stamps = Arc::clone(&stamps);

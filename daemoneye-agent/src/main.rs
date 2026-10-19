@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use daemoneye_agent::alert_publisher::{self, BrokerPublisher, spawn_wake_subscriber};
+use daemoneye_agent::alert_publisher::{self, BrokerPublisher};
 use daemoneye_agent::alert_sinks::build_sinks;
 use daemoneye_agent::detection_cycle::{
     CarriedFailure, PROCMOND_COLLECTOR_ID, RETENTION_SWEEP, build_signals, enrich_and_enqueue,
@@ -288,16 +288,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     info!(loaded_rules = loaded, "Loaded persisted detection rules");
 
     // Alert delivery: one worker per sink over the event store's outbox.
-    let (alert_cancel, alert_cancel_rx) = tokio::sync::watch::channel(false);
     let alert_broker = broker_manager
         .event_bus()
         .lock()
         .await
         .as_ref()
         .map(|bus| Arc::clone(bus.broker()));
-    let publisher: Arc<dyn alerting::AlertPublisher> = if let Some(ref broker) = alert_broker {
+    let publisher: Arc<dyn alerting::AlertPublisher> = if let Some(broker) = alert_broker {
         Arc::new(BrokerPublisher::new(
-            Arc::clone(broker),
+            broker,
             alert_publisher::masked_projection,
         ))
     } else {
@@ -320,15 +319,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             alert_sinks,
             &config.alerting,
             publisher,
-            alert_cancel_rx,
         )
         .await?,
     );
-    let wake_subscriber = if let Some(broker) = alert_broker {
-        Some(spawn_wake_subscriber(broker, Arc::clone(&alert_manager)).await?)
-    } else {
-        None
-    };
 
     // Indicate startup success before entering main loop
     #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
@@ -706,13 +699,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Alert workers first: in-flight sends finish (or stay `Retrying`) before the bus goes.
     info!("Shutting down alert delivery");
-    alert_publisher::shutdown_alert_delivery(
-        &alert_manager,
-        wake_subscriber,
-        alerting::SHUTDOWN_DRAIN,
-    )
-    .await;
-    drop(alert_cancel);
+    alert_manager.shutdown(alerting::SHUTDOWN_DRAIN).await;
 
     // Gracefully shutdown both services in parallel
     info!("Shutting down IPC server and embedded EventBus broker");

@@ -41,7 +41,7 @@ fn delivery() -> DeliveryConfig {
 
 fn spec(port: u16, tls: EmailTls) -> EmailSpec {
     EmailSpec {
-        name: "mail".to_owned(),
+        name: "mail".parse().unwrap(),
         host: "127.0.0.1".to_owned(),
         port,
         tls,

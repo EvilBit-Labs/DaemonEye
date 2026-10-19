@@ -21,7 +21,6 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::watch;
 
 pub const WEBHOOK: &str = "hook";
 pub const FILE: &str = "file";
@@ -104,22 +103,11 @@ pub fn temp_store() -> (tempfile::TempDir, Arc<EventStore>) {
 }
 
 /// Sinks built the way the agent builds them, then a started manager over `store`.
-pub async fn start_manager(
-    store: &Arc<EventStore>,
-    config: &AlertingConfig,
-) -> (AlertManager, watch::Sender<bool>) {
+pub async fn start_manager(store: &Arc<EventStore>, config: &AlertingConfig) -> AlertManager {
     let sinks = build_sinks(config, &resolver()).unwrap();
-    let (cancel, cancel_rx) = watch::channel(false);
-    let manager = AlertManager::start(
-        Arc::clone(store),
-        sinks,
-        config,
-        Arc::new(NoopPublisher),
-        cancel_rx,
-    )
-    .await
-    .unwrap();
-    (manager, cancel)
+    AlertManager::start(Arc::clone(store), sinks, config, Arc::new(NoopPublisher))
+        .await
+        .unwrap()
 }
 
 pub fn row(store: &EventStore, sink: &str, id: Uuid) -> DeliveryRecord {

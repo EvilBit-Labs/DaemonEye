@@ -117,7 +117,7 @@ impl SyslogSink {
         let facility = parse_facility(&spec.facility)
             .ok_or_else(|| config_error("syslog facility is not a name syslog defines"))?;
         Ok(Self {
-            name: spec.name.clone(),
+            name: spec.name.as_str().to_owned(),
             facility,
             app_name: spec.app_name.clone(),
             max_bytes: spec.max_message_bytes,

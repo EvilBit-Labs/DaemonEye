@@ -41,7 +41,7 @@ fn delivery() -> DeliveryConfig {
 
 fn spec(url: String) -> WebhookSpec {
     WebhookSpec {
-        name: "hook".to_owned(),
+        name: "hook".parse().unwrap(),
         url,
         auth: WebhookAuth::Bearer,
         token_env: Some("T".to_owned()),
@@ -440,7 +440,7 @@ fn builder_builds_webhook_and_syslog_sinks() {
     assert!(!built.is_local());
 
     let syslog = daemoneye_lib::alerting::config::SyslogSpec {
-        name: "sys".to_owned(),
+        name: "sys".parse().unwrap(),
         transport: daemoneye_lib::alerting::config::SyslogTransport::Udp,
         address: "127.0.0.1:514".to_owned(),
         facility: "local0".to_owned(),

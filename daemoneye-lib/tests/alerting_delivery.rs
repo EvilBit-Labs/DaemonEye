@@ -330,7 +330,6 @@ async fn a_panicking_send_restarts_the_worker_and_the_row_is_retried() {
 #[tokio::test]
 async fn start_refuses_a_delivery_setting_out_of_range() {
     let (_dir, store) = temp_store();
-    let (_cancel, cancel_rx) = tokio::sync::watch::channel(false);
     let mut alerting = AlertingConfig::default();
     alerting.delivery.max_open_rows_per_sink = 0;
 
@@ -339,7 +338,6 @@ async fn start_refuses_a_delivery_setting_out_of_range() {
         vec![Fake::new("net", false, Act::Ok).boxed()],
         &alerting,
         Arc::new(NoopPublisher),
-        cancel_rx,
     )
     .await
     .err()
@@ -755,13 +753,12 @@ async fn dead_letters_from_an_earlier_run_are_redriven_at_start() {
     }
 }
 
-/// The caller's cancellation stops the workers: later rows are not attempted.
+/// Shutdown stops the workers: a row enqueued afterwards is stored and not attempted.
 #[tokio::test(start_paused = true)]
-async fn the_external_cancellation_stops_delivery() {
+async fn shutdown_stops_delivery_of_later_rows() {
     let net = Fake::new("net", false, Act::Ok);
     let r = rig(vec![net.boxed()], config(|_| {})).await;
-    r.cancel.send(true).unwrap();
-    settle().await;
+    r.manager.shutdown(Duration::from_secs(1)).await;
     let a = alert(HIGH, "a");
 
     r.manager.enqueue(&a).await;
@@ -1262,7 +1259,7 @@ impl SinkBuilder for StubBuilder {
         _delivery: &DeliveryConfig,
     ) -> Result<Box<dyn daemoneye_lib::alerting::AlertSink>, daemoneye_lib::alerting::AlertingError>
     {
-        Ok(Fake::new(resolved.spec.name(), false, Act::Ok).boxed())
+        Ok(Fake::new(resolved.spec.name().as_str(), false, Act::Ok).boxed())
     }
 }
 

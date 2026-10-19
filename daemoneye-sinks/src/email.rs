@@ -68,13 +68,14 @@ fn tls_parameters(
 ) -> Result<TlsParameters, AlertingError> {
     let mut builder = TlsParameters::builder(spec.host.clone());
     if let Some(pem) = extra_root_pem {
-        let root = Certificate::from_pem(pem)
-            .map_err(|_invalid| config_error(&spec.name, "root certificate is not valid PEM"))?;
+        let root = Certificate::from_pem(pem).map_err(|_invalid| {
+            config_error(spec.name.as_str(), "root certificate is not valid PEM")
+        })?;
         builder = builder.add_root_certificate(root);
     }
     builder
         .build()
-        .map_err(|_failed| config_error(&spec.name, "TLS parameters cannot be built"))
+        .map_err(|_failed| config_error(spec.name.as_str(), "TLS parameters cannot be built"))
 }
 
 impl EmailSink {
@@ -143,7 +144,7 @@ impl EmailSink {
             }
         }
         Ok(Self {
-            name: spec.name.clone(),
+            name: spec.name.as_str().to_owned(),
             transport: builder.build(),
             from,
             to,
@@ -259,7 +260,7 @@ mod tests {
     fn resolved(tls: EmailTls) -> ResolvedSink {
         ResolvedSink {
             spec: SinkSpec::Email(EmailSpec {
-                name: "mail".to_owned(),
+                name: "mail".parse().unwrap(),
                 host: "smtp.example.com".to_owned(),
                 port: 587,
                 tls,

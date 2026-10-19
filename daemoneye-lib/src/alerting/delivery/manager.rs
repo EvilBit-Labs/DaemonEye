@@ -82,8 +82,7 @@ pub struct AlertManager {
 impl AlertManager {
     /// Seed the dedup window from `store` and start one worker per sink.
     ///
-    /// `cancel` flips to `true` to stop the workers; [`shutdown`](Self::shutdown) does the same
-    /// and waits.
+    /// [`shutdown`](Self::shutdown) stops the workers and waits for them.
     ///
     /// # Examples
     ///
@@ -101,13 +100,11 @@ impl AlertManager {
     /// # rt.block_on(async {
     /// let dir = tempfile::tempdir().unwrap();
     /// let store = Arc::new(EventStore::new(dir.path().join("events.redb")).unwrap());
-    /// let (_cancel, cancel_rx) = tokio::sync::watch::channel(false);
     /// let manager = AlertManager::start(
     ///     store,
     ///     vec![Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json))],
     ///     &AlertingConfig::default(),
     ///     Arc::new(NoopPublisher),
-    ///     cancel_rx,
     /// )
     /// .await
     /// .unwrap();
@@ -140,9 +137,8 @@ impl AlertManager {
         sinks: Vec<Box<dyn AlertSink>>,
         alerting: &AlertingConfig,
         publisher: Arc<dyn AlertPublisher>,
-        cancel: watch::Receiver<bool>,
     ) -> Result<Self, AlertingError> {
-        Self::start_seeded(store, sinks, alerting, publisher, cancel, None).await
+        Self::start_seeded(store, sinks, alerting, publisher, None).await
     }
 
     /// [`start`](Self::start) with a fixed retry-jitter seed, for reproducible tests.
@@ -156,10 +152,9 @@ impl AlertManager {
         sinks: Vec<Box<dyn AlertSink>>,
         alerting: &AlertingConfig,
         publisher: Arc<dyn AlertPublisher>,
-        cancel: watch::Receiver<bool>,
         seed: u64,
     ) -> Result<Self, AlertingError> {
-        Self::start_seeded(store, sinks, alerting, publisher, cancel, Some(seed)).await
+        Self::start_seeded(store, sinks, alerting, publisher, Some(seed)).await
     }
 
     async fn start_seeded(
@@ -167,7 +162,6 @@ impl AlertManager {
         sinks: Vec<Box<dyn AlertSink>>,
         alerting: &AlertingConfig,
         publisher: Arc<dyn AlertPublisher>,
-        cancel: watch::Receiver<bool>,
         seed: Option<u64>,
     ) -> Result<Self, AlertingError> {
         // The loader validates a config file; a config built in code gets the same check here.
@@ -186,7 +180,6 @@ impl AlertManager {
         let (stop_tx, stop_rx) = watch::channel(false);
         let stop = Arc::new(stop_tx);
         let mut tasks = JoinSet::new();
-        tasks.spawn(forward_cancel(cancel, stop_rx.clone(), Arc::clone(&stop)));
         for (index, runtime) in runtimes.iter().enumerate() {
             let rng = seed.map_or_else(
                 || StdRng::from_rng(&mut rand::rng()),
@@ -369,8 +362,8 @@ impl AlertManager {
         futures::future::join_all(sends).await;
     }
 
-    /// Wake every worker, for rows enqueued from outside this handle.
-    pub fn wake_all(&self) {
+    /// Wake every worker.
+    fn wake_all(&self) {
         for sink in &self.sinks {
             sink.wake.notify_one();
         }
@@ -579,23 +572,6 @@ async fn seed_window(shared: &Shared) -> Result<DedupWindow, AlertingError> {
         .map(|(key, at_ms, id)| (key, (at_ms, id)))
         .collect();
     Ok(DedupWindow { entries })
-}
-
-/// Turn the caller's cancellation into the workers' own, then end.
-async fn forward_cancel(
-    mut external: watch::Receiver<bool>,
-    mut internal: watch::Receiver<bool>,
-    stop: Arc<watch::Sender<bool>>,
-) {
-    tokio::select! {
-        flagged = external.wait_for(|&cancelled| cancelled) => {
-            // A dropped sender is not a request to stop.
-            if flagged.is_ok() {
-                stop.send_replace(true);
-            }
-        }
-        () = wait_cancelled(&mut internal) => {}
-    }
 }
 
 /// Announce queued alerts until stopped; a failed publish is counted, never retried, and so is

@@ -84,7 +84,7 @@ The half-open interval of `collection_time`, `(after_ms, through_ms]`, that one 
 
 ### Delivery row
 
-The agent's record of one alert bound for one sink, in the `alert_deliveries` table: its state (`pending`, `retrying`, `delivered`, `dead_lettered`, `suppressed_duplicate`), attempt and redrive counts, last error class, enqueue, next-attempt and terminal times, and the alert that suppressed it when it is a duplicate. It is written in the same transaction as the alert and is the source of truth for delivery; the eventbus message that announces it is only a wake signal. The detection cursor never depends on it.
+The agent's record of one alert bound for one sink, in the `alert_deliveries` table: its state (`pending`, `retrying`, `delivered`, `dead_lettered`, `suppressed_duplicate`), attempt and redrive counts, last error class, enqueue, next-attempt and terminal times, and the alert that suppressed it when it is a duplicate. It is written in the same transaction as the alert and is the source of truth for delivery; the eventbus message that announces it is fan-out only. The detection cursor never depends on it.
 
 ### Dead-letter queue
 
