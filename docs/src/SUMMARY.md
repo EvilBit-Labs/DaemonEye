@@ -8,6 +8,7 @@
   - [Collector-Core Framework](./architecture/collector-core-framework.md)
 - [Technical Documentation](./technical.md)
   - [Core Monitoring](./technical/core-monitoring.md)
+  - [Alert Delivery](./technical/alert-delivery.md)
   - [EventBus Architecture](./technical/eventbus-architecture.md)
   - [RPC and EventBus Architecture](./technical/rpc-eventbus-architecture.md)
   - [IPC Implementation](./technical/ipc-implementation.md)

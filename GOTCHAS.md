@@ -14,6 +14,7 @@ CI runs `cargo nextest run --profile ci --all-features` on a Linux / macOS / Win
 - **Misses platform `cfg` code:** `#[cfg(windows)]` / `#[cfg(unix)]`-only paths only compile on that platform. The most common bite is a `use` that is referenced *only* inside a `#[cfg(unix)]` block — fine on Linux/macOS, but on Windows it's an unused import, and the workspace `warnings = "deny"` turns that into a build failure.
 - **You can't cross-compile to Windows locally:** the macOS dev host can't build the `x86_64-pc-windows-msvc` target — `blake3`'s build script needs the MSVC assembler (`ml64.exe`). So Windows-only `cfg` issues validate **only** in CI.
 - **Mitigation:** gate `cfg`-specific imports with the *same* `cfg` as their use (`#[cfg(unix)] use ...;`). Before declaring a feature-gated change done, run `cargo clippy --workspace --all-targets --all-features -- -D warnings` locally; accept that Windows-`cfg` correctness ultimately rides on CI.
+- **`figment::Jail` paths must be joined, not formatted:** on Windows `jail.directory()` is a verbatim `\\?\` path, where `/` is not a separator, so `format!("{dir}/{name}")` names one non-existent component and the test fails on the Windows leg only (with the other legs `cancelled` by fail-fast, not failed). Use `jail.directory().join(name)`. Write-up: [`docs/solutions/build-errors/figment-jail-paths-must-be-joined-on-windows.md`](docs/solutions/build-errors/figment-jail-paths-must-be-joined-on-windows.md).
 
 ### 1.2 `clippy::expect_used` Is Denied in Production Code
 
