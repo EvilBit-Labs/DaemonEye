@@ -26,7 +26,8 @@
 //! directory is created `0o700` under the socket directory.
 //!
 //! On **Windows** the property comes from *placement* rather than from setting a DACL. The token
-//! directory is rooted at `%LOCALAPPDATA%` instead of the socket directory, and the file inherits
+//! directory is rooted at `%LOCALAPPDATA%` instead of the socket directory (in a subdirectory
+//! keyed by the socket directory's hash, so stores stay apart), and the file inherits
 //! that location's ACL, which grants the owning user, `SYSTEM` and `Administrators`. That is the
 //! same shape as the Unix arm, where `0o400` inside `0o700` grants the owner and `root` — in both
 //! cases the account and the machine's superuser, and nobody else. There is no socket directory to
@@ -172,7 +173,9 @@ impl std::fmt::Debug for SpawnTokenStore {
 }
 
 impl SpawnTokenStore {
-    /// Open a store under `socket_directory`, in an owner-only `spawn-tokens` subdirectory.
+    /// Open a store keyed to `socket_directory`: on Unix an owner-only `spawn-tokens`
+    /// subdirectory of it, elsewhere a hash-named subdirectory of the account's local data
+    /// directory, owner-only as well.
     ///
     /// An existing token directory is checked rather than corrected: one that other accounts can
     /// already reach may already have been tampered with, so this refuses instead of tightening the
@@ -350,13 +353,20 @@ fn token_directory(socket_directory: &Path) -> Result<PathBuf, SpawnTokenError> 
 
 /// Where the token directory lives off Unix: under the account's own local application-data
 /// directory, whose ACL already grants that account, `SYSTEM` and `Administrators` and nobody
-/// else. `socket_directory` is deliberately unused — rooting the tokens there would inherit
-/// whatever ACL a shared path carries, which is the protection this arm exists to provide. See the
-/// module's platform note.
+/// else. The tokens are not rooted at `socket_directory` itself, which would inherit whatever ACL a
+/// shared path carries; its hash only names the subdirectory. See the module's platform note.
 #[cfg(not(unix))]
-fn token_directory(_socket_directory: &Path) -> Result<PathBuf, SpawnTokenError> {
+fn token_directory(socket_directory: &Path) -> Result<PathBuf, SpawnTokenError> {
     let base = dirs::data_local_dir().ok_or(SpawnTokenError::NoPrivateRoot)?;
-    Ok(base.join("DaemonEye").join(TOKEN_DIR_NAME))
+    // One subdirectory per socket directory, so two stores on the same account (two agents, or
+    // parallel tests) never share a token file. Collectors find the file through argv, so the
+    // name only has to be stable for one configuration.
+    let key: String = blake3::hash(socket_directory.as_os_str().as_encoded_bytes())
+        .to_hex()
+        .chars()
+        .take(16)
+        .collect();
+    Ok(base.join("DaemonEye").join(TOKEN_DIR_NAME).join(key))
 }
 
 /// Create `directory` owner-only if it is absent, with the mode set at creation.

@@ -4,9 +4,11 @@
 
 use chrono::{TimeZone, Utc};
 use daemoneye_agent::detection_cycle::{
-    CarriedFailure, PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
-    next_window, open_event_store, persist_alerts,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, enrich_and_enqueue, ingest_cycle, load_persisted_rules,
+    next_cycle_ordinal, next_window, open_event_store,
 };
+use daemoneye_lib::alerting::{AlertManager, EnrichContext, NoopPublisher};
+use daemoneye_lib::config::AlertingConfig;
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::models::{
     Alert, AlertSeverity, Completeness, CompletenessReason, DetectionRule, ProcessRecord,
@@ -22,6 +24,13 @@ const BASE_MS: u64 = 36_000_000;
 struct Fx {
     _dir: TempDir,
     store: Arc<EventStore>,
+}
+
+fn ctx() -> EnrichContext {
+    EnrichContext {
+        hostname: "test-host".to_owned(),
+        agent_version: "0.0.0".to_owned(),
+    }
 }
 
 fn fx() -> Fx {
@@ -240,8 +249,8 @@ async fn startup_loads_the_valid_rule_and_warns_about_the_rejected_one() {
     });
 }
 
-#[test]
-fn persisted_alerts_keep_their_completeness() {
+#[tokio::test]
+async fn persisted_alerts_keep_their_completeness() {
     let fx = fx();
     let degraded = Completeness::degraded(vec![CompletenessReason::SequenceGapDetected {
         collector_id: "procmond".to_owned(),
@@ -268,7 +277,19 @@ fn persisted_alerts_keep_their_completeness() {
         ),
     ];
 
-    assert_eq!(persist_alerts(&fx.store, &alerts), 2);
+    let manager = AlertManager::start(
+        Arc::clone(&fx.store),
+        Vec::new(),
+        &AlertingConfig::default(),
+        Arc::new(NoopPublisher),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        enrich_and_enqueue(&fx.store, &manager, &alerts, &ctx()).await,
+        2
+    );
 
     let stored = fx.store.get_all_alerts().unwrap();
     assert_eq!(stored.len(), 2);
