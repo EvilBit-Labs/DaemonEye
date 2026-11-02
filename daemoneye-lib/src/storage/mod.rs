@@ -20,6 +20,7 @@
 
 mod bucket;
 mod codec;
+mod deliveries;
 mod error;
 mod index;
 pub mod ingest;
@@ -41,14 +42,20 @@ pub mod read;
 mod records;
 pub mod schema;
 
+pub use bucket::DAILY_MS;
+pub use deliveries::{
+    Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries, PruneReport,
+    RedriveReport,
+};
 pub use error::StorageError;
+pub use records::DELIVERY_KEY_SEP;
 pub use schema::{
     BundleManifest, BundleSigner, GapRecord, MigrationReport, SCHEMA_VERSION, SchemaClassification,
     SignerError,
 };
 
 use crate::config::{DatabaseConfig, MIB};
-use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
+use crate::models::{Alert, DeliveryRecord, DetectionRule, ProcessRecord, SystemInfo, Uuid};
 use bucket::{
     bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
 };
@@ -169,6 +176,20 @@ fn free_key(
             context: "event key sequence at one millisecond".to_owned(),
         })?;
     Ok((ts_ms, next))
+}
+
+/// Epoch milliseconds of a record's start, falling back to its collection time when the start is
+/// unknown. Pre-epoch values clamp to 0.
+#[must_use]
+pub fn effective_start_ms(record: &ProcessRecord) -> u64 {
+    record.start_time.map_or_else(
+        || u64::try_from(record.collection_time.timestamp_millis()).unwrap_or(0),
+        |start| {
+            start
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        },
+    )
 }
 
 /// Collect the live process-event bucket ids from a read transaction, ascending.
@@ -473,6 +494,37 @@ impl EventStore {
         Ok(out)
     }
 
+    /// The most recently ingested record for `pid` whose effective start ([`effective_start_ms`])
+    /// is not later than `not_after_ms`, or `None`. Newest means ingest order (buckets and
+    /// postings walked in reverse), not start time. Scanning stops at the first hit, so a
+    /// recycled pid cannot name a process that started after `not_after_ms`.
+    pub fn latest_by_pid(
+        &self,
+        pid: u32,
+        not_after_ms: u64,
+    ) -> Result<Option<ProcessRecord>, StorageError> {
+        let txn = self.db.begin_read()?;
+        for id in collect_bucket_ids(&txn)?.into_iter().rev() {
+            let idx = match txn.open_multimap_table(u32_index_def(&pid_index_name(id))) {
+                Ok(idx) => idx,
+                Err(redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            let base = txn.open_table(bucket_def(&bucket_table_name(id)))?;
+            for posting in idx.get(pid)?.rev() {
+                let key = posting?.value();
+                let Some(guard) = base.get(key)? else {
+                    continue;
+                };
+                let record: ProcessRecord = decode_value(guard.value())?;
+                if effective_start_ms(&record) <= not_after_ms {
+                    return Ok(Some(record));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// All process records whose `name` matches, across every live bucket. The
     /// `idx:name` index is keyed by a 128-bit hash, so each candidate posting is
     /// verified against the primary row's exact name before inclusion — this is
@@ -613,9 +665,127 @@ impl EventStore {
         records::get_alert(&self.db, id)
     }
 
+    /// Write `alert` and one delivery row per sink in a single transaction.
+    ///
+    /// Writes nothing and returns [`EnqueueReport::AlreadyEnqueued`] when any `(sink, alert)`
+    /// row already exists. With `suppressed_by` set every row is a terminal duplicate of that
+    /// alert; otherwise a sink at `max_open_rows_per_sink` open rows dead-letters the new row
+    /// (`QueueFull`), unless the alert is High or Critical and a strictly lower-severity
+    /// `Pending` row can be displaced instead.
+    pub fn enqueue_alert(
+        &self,
+        alert: &Alert,
+        sinks: &[&str],
+        suppressed_by: Option<Uuid>,
+        max_open_rows_per_sink: usize,
+        now_ms: u64,
+    ) -> Result<EnqueueReport, StorageError> {
+        deliveries::enqueue_alert(
+            &self.db,
+            alert,
+            sinks,
+            suppressed_by,
+            max_open_rows_per_sink,
+            now_ms,
+        )
+    }
+
+    /// Fetch one delivery row in any state.
+    pub fn get_delivery(
+        &self,
+        sink: &str,
+        alert_id: Uuid,
+    ) -> Result<Option<DeliveryRecord>, StorageError> {
+        deliveries::get_delivery(&self.db, sink, alert_id)
+    }
+
+    /// Non-terminal rows of `sink`, oldest enqueue first; undecodable rows and dead letters are
+    /// counted from the same scan.
+    pub fn open_deliveries(&self, sink: &str) -> Result<OpenDeliveries, StorageError> {
+        deliveries::open_deliveries(&self.db, sink)
+    }
+
+    /// Claim a `Pending` or `Retrying` row: `Retrying`, `attempts + 1`, `next_attempt_ms = now_ms`.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::DeliveryStale`] when the row is missing or not claimable.
+    pub fn claim(&self, sink: &str, alert_id: Uuid, now_ms: u64) -> Result<Claimed, StorageError> {
+        deliveries::claim(&self.db, sink, alert_id, now_ms)
+    }
+
+    /// Replace a row only if it still matches `expected`.
+    pub fn complete(
+        &self,
+        sink: &str,
+        alert_id: Uuid,
+        expected: DeliveryExpectation,
+        new: &DeliveryRecord,
+    ) -> Result<CompleteOutcome, StorageError> {
+        deliveries::complete(&self.db, sink, alert_id, expected, new)
+    }
+
+    /// Dead-lettered rows of `sink`, oldest terminal first.
+    pub fn dead_letters(&self, sink: &str) -> Result<Vec<(Uuid, DeliveryRecord)>, StorageError> {
+        deliveries::dead_letters(&self.db, sink)
+    }
+
+    /// Number of dead-lettered rows on `sink`, counted without decoding them.
+    pub fn dead_letter_count(&self, sink: &str) -> Result<usize, StorageError> {
+        deliveries::dead_letter_count(&self.db, sink)
+    }
+
+    /// Move up to `limit` of the oldest dead letters back to `Pending`, but never past
+    /// `max_open_rows` open rows on the sink (only the remaining open capacity moves). Rows at
+    /// `max_redrives` stay dead-lettered with `RedrivesExhausted` and do not count toward `limit`.
+    /// The report's `remaining` counts eligible dead letters left behind.
+    pub fn redrive_batch(
+        &self,
+        sink: &str,
+        limit: usize,
+        max_open_rows: usize,
+        max_redrives: u32,
+        now_ms: u64,
+    ) -> Result<RedriveReport, StorageError> {
+        deliveries::redrive_batch(&self.db, sink, limit, max_open_rows, max_redrives, now_ms)
+    }
+
+    /// Remove dead letters of `sink` beyond `keep`, lowest severity then oldest first.
+    pub fn evict_dead_letters(&self, sink: &str, keep: usize) -> Result<usize, StorageError> {
+        deliveries::evict_dead_letters(&self.db, sink, keep)
+    }
+
+    /// Delete terminal rows (any sink) that went terminal more than `retention_ms` ago.
+    /// Alerts and non-terminal rows are never touched.
+    pub fn prune_deliveries(
+        &self,
+        now_ms: u64,
+        retention_ms: u64,
+    ) -> Result<PruneReport, StorageError> {
+        deliveries::prune_deliveries(&self.db, now_ms, retention_ms)
+    }
+
+    /// `(deduplication_key, enqueued_at_ms, alert_id)`, newest per key, for alerts enqueued within
+    /// `window_ms` that have at least one row that was not a suppressed duplicate.
+    pub fn seed_dedup_window(
+        &self,
+        now_ms: u64,
+        window_ms: u64,
+    ) -> Result<Vec<(String, u64, Uuid)>, StorageError> {
+        deliveries::seed_dedup_window(&self.db, now_ms, window_ms)
+    }
+
     /// Fetch every persisted alert.
     pub fn get_all_alerts(&self) -> Result<Vec<Alert>, StorageError> {
         records::all_alerts(&self.db)
+    }
+
+    /// The underlying redb handle. Test seam: redb admits one handle per file, so a test that
+    /// wants to break and repair a table under a running store has to go through this one.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn database(&self) -> &Database {
+        &self.db
     }
 
     /// Persist (upsert) scan metadata (carrying host identity, U9).

@@ -1,0 +1,5 @@
+---
+source: daemoneye-sinks/tests/syslog.rs
+expression: line
+---
+<27>1 2023-11-14T22:13:20.123Z web01 daemoneye - 0b1c2d3e4f5061728394a5b6c7d8e9f0 [daemoneye@32473 rule="rule-1" pid="10" completeness="complete" dedup="high:rule-1:Apache spawned bash"] [high] rule-1 - Apache spawned bash: httpd -> bash

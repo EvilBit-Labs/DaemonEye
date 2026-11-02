@@ -112,6 +112,8 @@ redb = { workspace = true }
 # Regex compilation for REGEXP detection patterns
 regex = { workspace = true, optional = true }
 rs_merkle = { workspace = true }
+# Sink credentials held in memory (resolved from environment variables at sink build)
+secrecy = { workspace = true }
 # Core dependencies used by all components
 serde = { workspace = true }
 
@@ -158,6 +160,8 @@ predicates = { workspace = true }
 proptest = { workspace = true }
 # cache_metrics makes redb count cache evictions, which the page-cache wiring test observes.
 redb = { workspace = true, features = ["cache_metrics"] }
+# `test-util`: paused time for the delivery retry, breaker and worker tests.
+tokio = { workspace = true, features = ["test-util"] }
 # `no-env-filter`: the default filter admits only the test crate's own events, which would hide
 # the library logs the detection tests assert on.
 tracing-test = { workspace = true, features = ["no-env-filter"] }

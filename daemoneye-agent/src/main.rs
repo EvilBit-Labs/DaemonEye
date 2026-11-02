@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
+use daemoneye_agent::alert_publisher::{self, BrokerPublisher};
+use daemoneye_agent::alert_sinks::build_sinks;
 use daemoneye_agent::detection_cycle::{
-    CarriedFailure, PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, ingest_step,
-    load_persisted_rules, next_cycle_ordinal, next_window, open_event_store, persist_alerts,
-    run_detection_cycle,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, RETENTION_SWEEP, build_signals, enrich_and_enqueue,
+    ingest_cycle, ingest_step, load_persisted_rules, next_cycle_ordinal, next_window,
+    open_event_store, run_detection_cycle, run_retention_sweep,
 };
 use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
 use daemoneye_lib::detection::execution::executor::RuleExecutor;
@@ -285,13 +287,41 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     drop(startup_engine);
     info!(loaded_rules = loaded, "Loaded persisted detection rules");
 
-    // Initialize alert manager
-    let mut alert_manager = alerting::AlertManager::new();
-    let stdout_sink = Box::new(alerting::StdoutSink::new(
-        "stdout".to_owned(),
-        alerting::OutputFormat::Json,
-    ));
-    alert_manager.add_sink(stdout_sink);
+    // Alert delivery: one worker per sink over the event store's outbox.
+    let alert_broker = broker_manager
+        .event_bus()
+        .lock()
+        .await
+        .as_ref()
+        .map(|bus| Arc::clone(bus.broker()));
+    let publisher: Arc<dyn alerting::AlertPublisher> = if let Some(broker) = alert_broker {
+        Arc::new(BrokerPublisher::new(
+            broker,
+            alert_publisher::masked_projection,
+        ))
+    } else {
+        warn!("Event bus unavailable; stored alerts will not be published");
+        Arc::new(alerting::NoopPublisher)
+    };
+    daemoneye_sinks::ensure_crypto_provider();
+    // Refuses startup when an enabled sink names a credential variable that is unset or empty.
+    let alert_sinks = build_sinks(&config.alerting, &alerting::CredentialResolver::from_env())?;
+    let enrich_context = alerting::EnrichContext {
+        hostname: sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_owned()),
+        agent_version: env!("CARGO_PKG_VERSION").to_owned(),
+    };
+    let retention_ms =
+        u64::from(config.database.retention_days).saturating_mul(daemoneye_lib::storage::DAILY_MS);
+    let mut last_retention_sweep = Instant::now();
+    let alert_manager = Arc::new(
+        alerting::AlertManager::start(
+            Arc::clone(&event_store),
+            alert_sinks,
+            &config.alerting,
+            publisher,
+        )
+        .await?,
+    );
 
     // Indicate startup success before entering main loop
     #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
@@ -576,25 +606,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if !alerts.is_empty() {
                     info!(count = alerts.len(), "Generated alerts");
                 }
-                for alert in &alerts {
-                    match alert_manager.send_alert(alert).await {
-                        Ok(results) => {
-                            if results.is_empty() { warn!("Alert generated but no sinks succeeded"); }
-                        }
-                        Err(e) => {
-                            error!(error=?e, "Failed to deliver alert");
-                            telemetry.record_error();
-                        }
-                    }
-                }
-                // Every delivered alert is also stored, so its completeness marker is readable later.
-                let stored_alerts = persist_alerts(&event_store, &alerts);
+                // Every alert the store accepts is stored with its delivery rows, so its completeness
+                // marker is readable later; one it refuses goes once to the local sinks only.
+                let stored_alerts = enrich_and_enqueue(&event_store, &alert_manager, &alerts, &enrich_context).await;
                 if stored_alerts != alerts.len() {
                     warn!(
                         stored = stored_alerts,
                         total = alerts.len(),
                         "Some alerts were not persisted; the evaluated mark stays, so a restart re-evaluates this window"
                     );
+                    telemetry.record_error();
                 }
                 // The cycle is complete once every alert is stored: a restart resumes from here, and
                 // so does the next cycle, whose window covers this one again until every alert of it
@@ -612,9 +633,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
+                if last_retention_sweep.elapsed() >= RETENTION_SWEEP {
+                    last_retention_sweep = Instant::now();
+                    let sweep_store = Arc::clone(&event_store);
+                    match tokio::task::spawn_blocking(move || run_retention_sweep(&sweep_store, now_ms, retention_ms)).await {
+                        Ok(Ok((buckets, delivery_rows))) => {
+                            info!(buckets, delivery_rows, "Retention sweep complete");
+                        }
+                        Ok(Err(e)) => warn!(error = %e, "Retention sweep failed"),
+                        Err(e) => warn!(error = %e, "Retention sweep task failed"),
+                    }
+                }
                 if iteration.is_multiple_of(10) { // periodic health check every 10 iterations
                     let h = telemetry.health_check();
                     info!(status=%h.status, "Telemetry health check");
+                    log_delivery_health(&alert_manager);
 
                     // Check broker health
                     let broker_health = broker_manager.health_check().await;
@@ -664,6 +697,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Alert workers first: in-flight sends finish (or stay `Retrying`) before the bus goes.
+    info!("Shutting down alert delivery");
+    alert_manager.shutdown(alerting::SHUTDOWN_DRAIN).await;
+
     // Gracefully shutdown both services in parallel
     info!("Shutting down IPC server and embedded EventBus broker");
 
@@ -686,4 +723,61 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("daemoneye-agent shutdown complete.")
     };
     Ok(())
+}
+
+/// Emit one event at warn when `unhealthy`, else at info; `tracing::event!` needs the level
+/// as a literal, so the fields are written once here.
+macro_rules! health_event {
+    ($unhealthy:expr, $($field:tt)*) => {
+        if $unhealthy {
+            warn!($($field)*);
+        } else {
+            info!($($field)*);
+        }
+    };
+}
+
+/// Log the alert delivery roll-up: aggregate, per-sink breaker and dead-letter counts, store and
+/// publish failures (R23). Anything unhealthy logs at warn, the rest at info.
+fn log_delivery_health(manager: &alerting::AlertManager) {
+    let health = manager.health();
+    let aggregate = format!("{:?}", health.aggregate);
+    let (store_failures, publish_failures, unpersisted_alerts) = (
+        health.store_failures,
+        health.publish_failures,
+        health.unpersisted_alerts,
+    );
+    health_event!(
+        health.aggregate != alerting::DeliveryAggregate::Healthy,
+        aggregate,
+        store_failures,
+        publish_failures,
+        unpersisted_alerts,
+        "Alert delivery health"
+    );
+    for sink in &health.sinks {
+        let (name, breaker) = (sink.name.as_str(), format!("{:?}", sink.breaker));
+        let last_error = sink.last_error.as_ref().map(ToString::to_string);
+        health_event!(
+            sink.is_unhealthy(),
+            sink = name,
+            breaker,
+            is_local = sink.is_local,
+            misconfigured = sink.misconfigured,
+            failing = sink.failing,
+            fire_and_forget = sink.fire_and_forget,
+            consecutive_failures = sink.consecutive_failures,
+            attempts = sink.attempts,
+            delivered = sink.delivered,
+            success_rate = sink.success_rate,
+            dead_letters = sink.dead_letters,
+            evicted = sink.evicted,
+            queue_full = sink.queue_full,
+            corrupt = sink.corrupt,
+            oldest_pending_age_ms = sink.oldest_pending_age_ms,
+            last_error,
+            last_success_ms = sink.last_success_ms,
+            "Alert sink health"
+        );
+    }
 }

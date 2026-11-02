@@ -48,6 +48,13 @@ pub enum EventBusError {
     /// RPC operation errors
     #[error("RPC error: {0}")]
     Rpc(String),
+
+    /// A transport client asked for a restricted topic
+    #[error("Access denied: pattern {pattern} matches a restricted topic")]
+    AccessDenied {
+        /// The refused subscription pattern
+        pattern: String,
+    },
 }
 
 impl EventBusError {
