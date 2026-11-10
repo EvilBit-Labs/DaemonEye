@@ -5,7 +5,7 @@ use crate::error::{EventBusError, Result};
 use crate::message::{BusEvent, CollectionEvent, EventSubscription, Message};
 use crate::queue_manager::QueueManager;
 use crate::rate_limiter::RateLimiter;
-use crate::topic::TopicMatcher;
+use crate::topic::{TopicMatcher, TopicPattern, TopicRegistry};
 use crate::transport::{
     ClientConfig, ClientConnectionManager, SocketConfig, TransportClient, TransportServer,
 };
@@ -43,6 +43,8 @@ pub struct DaemoneyeBroker {
     /// Raw message subscribers for RPC (receive Message directly)
     raw_subscriber_senders:
         Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<Message>>>>,
+    /// Access levels consulted by `subscribe_client`
+    topic_registry: TopicRegistry,
     /// Reverse mapping from original subscriber IDs to broker UUIDs
     subscriber_id_mapping: Arc<Mutex<std::collections::HashMap<String, Uuid>>>,
     /// Routing table for one-to-one messaging (`client_id` -> transport client)
@@ -125,6 +127,7 @@ impl DaemoneyeBroker {
             config,
             subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
             raw_subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            topic_registry: TopicRegistry::new(),
             subscriber_id_mapping: Arc::new(Mutex::new(std::collections::HashMap::new())),
             direct_routing: Arc::new(Mutex::new(std::collections::HashMap::new())),
             publish_semaphore: Arc::new(tokio::sync::Semaphore::new(1000)),
@@ -590,6 +593,9 @@ impl DaemoneyeBroker {
         }
         drop(senders_guard);
 
+        let raw_delivered_count = self.deliver_raw(&subscribers, &message).await;
+        delivered_count = delivered_count.saturating_add(raw_delivered_count);
+
         // Increment atomic counters on the hot path (no Mutex required)
         self.messages_published.fetch_add(1, Ordering::Relaxed);
         self.messages_delivered
@@ -692,30 +698,7 @@ impl DaemoneyeBroker {
             }
         }
 
-        // Send raw messages to RPC subscribers (only those matching the topic)
-        let mut raw_senders_guard = self.raw_subscriber_senders.lock().await;
-        let mut raw_failed_senders = Vec::new();
-        let mut raw_delivered_count = 0_u64;
-
-        for subscriber_id in &subscribers {
-            if let Some(sender) = raw_senders_guard.get(subscriber_id) {
-                if sender.send(message.clone()).is_err() {
-                    warn!(
-                        "Failed to send raw message to subscriber: {}",
-                        subscriber_id
-                    );
-                    raw_failed_senders.push(subscriber_id.clone());
-                } else {
-                    raw_delivered_count = raw_delivered_count.saturating_add(1);
-                }
-            }
-        }
-
-        // Remove failed raw senders
-        for subscriber_id in raw_failed_senders {
-            raw_senders_guard.remove(&subscriber_id);
-        }
-        drop(raw_senders_guard);
+        let raw_delivered_count = self.deliver_raw(&subscribers, &message).await;
 
         // Increment atomic counters on the hot path (no Mutex required)
         self.messages_published.fetch_add(1, Ordering::Relaxed);
@@ -730,6 +713,33 @@ impl DaemoneyeBroker {
             topic
         );
         Ok(())
+    }
+
+    /// Send `message` to the raw subscribers among `subscribers`, dropping closed receivers;
+    /// returns how many received it.
+    async fn deliver_raw(&self, subscribers: &[String], message: &Message) -> u64 {
+        let mut raw_senders_guard = self.raw_subscriber_senders.lock().await;
+        let mut raw_failed_senders = Vec::new();
+        let mut raw_delivered_count = 0_u64;
+
+        for subscriber_id in subscribers {
+            if let Some(sender) = raw_senders_guard.get(subscriber_id) {
+                if sender.send(message.clone()).is_err() {
+                    warn!(
+                        "Failed to send raw message to subscriber: {}",
+                        subscriber_id
+                    );
+                    raw_failed_senders.push(subscriber_id.clone());
+                } else {
+                    raw_delivered_count = raw_delivered_count.saturating_add(1);
+                }
+            }
+        }
+
+        for subscriber_id in raw_failed_senders {
+            raw_senders_guard.remove(&subscriber_id);
+        }
+        raw_delivered_count
     }
 
     /// Subscribe to a topic pattern
@@ -859,12 +869,31 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
-    /// Subscribe a client to topic patterns
+    /// Subscribe a client to topic patterns.
+    ///
+    /// Authorized positively: a pattern is accepted only when a `Public` registry
+    /// entry covers every topic it can match. Unregistered and `Privileged`
+    /// topics are therefore refused, as is anything overlapping a restricted entry.
+    ///
+    /// # Errors
+    ///
+    /// [`EventBusError::AccessDenied`] for a pattern the registry does not admit, or the
+    /// pattern-parse error for one that is not a valid topic pattern.
     pub async fn subscribe_client(
         &self,
         client_id: &str,
         topic_patterns: Vec<String>,
     ) -> Result<()> {
+        for pattern in &topic_patterns {
+            let parsed = TopicPattern::new(pattern)?;
+            if !self.topic_registry.pattern_is_public(&parsed)
+                || self.topic_registry.pattern_matches_restricted(&parsed)
+            {
+                return Err(EventBusError::AccessDenied {
+                    pattern: pattern.clone(),
+                });
+            }
+        }
         let mut client_manager = self.client_manager.lock().await;
         client_manager
             .subscribe_client(client_id, topic_patterns)
@@ -1368,5 +1397,173 @@ mod tests {
             assert_eq!(queue_stats.messages_dequeued, 2);
             assert_eq!(queue_stats.current_depth, 0);
         }
+    }
+
+    const ALERT_TOPIC: &str = "events.alert.new";
+
+    async fn recv_one(rx: &mut mpsc::UnboundedReceiver<Message>) -> Option<Message> {
+        tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    #[tokio::test]
+    async fn raw_subscriber_receives_events_publish_with_exact_payload() {
+        let broker = DaemoneyeBroker::new("/tmp/test-raw-alert.sock")
+            .await
+            .unwrap();
+        let mut rx = broker
+            .subscribe_raw(ALERT_TOPIC, Uuid::new_v4())
+            .await
+            .unwrap();
+        let mut other = broker
+            .subscribe_raw("events.process.#", Uuid::new_v4())
+            .await
+            .unwrap();
+
+        broker
+            .publish(ALERT_TOPIC, "alert-1", b"not-postcard".to_vec())
+            .await
+            .unwrap();
+
+        let msg = recv_one(&mut rx)
+            .await
+            .expect("raw subscriber must receive");
+        assert_eq!(msg.payload, b"not-postcard");
+        assert_eq!(msg.topic, ALERT_TOPIC);
+        assert!(recv_one(&mut other).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn typed_subscriber_still_receives_collection_event() {
+        use crate::message::{CollectionEvent, ProcessEvent};
+        let broker = DaemoneyeBroker::new("/tmp/test-typed-alert.sock")
+            .await
+            .unwrap();
+        let mut bus = DaemoneyeEventBus::from_broker(broker).await.unwrap();
+        let subscription = EventSubscription {
+            subscriber_id: Uuid::new_v4().to_string(),
+            capabilities: SourceCaps {
+                event_types: vec!["process".to_string()],
+                collectors: vec!["procmond".to_string()],
+                max_priority: 5,
+            },
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            enable_wildcards: true,
+            include_control: false,
+        };
+        let mut typed = bus.subscribe(subscription).await.unwrap();
+        let event = CollectionEvent::Process(ProcessEvent {
+            pid: 1,
+            name: "init".to_owned(),
+            command_line: None,
+            executable_path: None,
+            ppid: None,
+            start_time: None,
+            metadata: std::collections::HashMap::new(),
+        });
+        let payload = postcard::to_allocvec(&event).unwrap();
+        bus.broker()
+            .publish("events.process.new", "c1", payload)
+            .await
+            .unwrap();
+        let got = tokio::time::timeout(std::time::Duration::from_millis(500), typed.recv())
+            .await
+            .expect("typed subscriber must receive");
+        assert!(got.is_some());
+
+        bus.broker()
+            .publish(ALERT_TOPIC, "c2", b"alert".to_vec())
+            .await
+            .unwrap();
+        assert!(
+            typed.try_recv().is_err(),
+            "alert publish must not reach the process subscriber"
+        );
+    }
+
+    #[tokio::test]
+    async fn transport_client_is_refused_restricted_alert_patterns() {
+        let broker = DaemoneyeBroker::new("/tmp/test-restrict-alert.sock")
+            .await
+            .unwrap();
+        for pattern in [
+            ALERT_TOPIC,
+            "events.#",
+            "events.alert.#",
+            "events.alert.+",
+            "events.+.new",
+        ] {
+            let err = broker
+                .subscribe_client(
+                    "any-client",
+                    vec!["events.process.anomaly".to_owned(), pattern.to_owned()],
+                )
+                .await
+                .expect_err(pattern);
+            assert!(
+                matches!(&err, EventBusError::AccessDenied { pattern: p } if p == pattern),
+                "{pattern}: {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_client_may_subscribe_to_public_topic() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("b.sock");
+        let sock = sock.to_str().unwrap();
+        let broker = DaemoneyeBroker::new_with_config(sock, false, 100).unwrap();
+        broker.start().await.unwrap();
+        broker
+            .add_client("c1".to_owned(), &make_socket_config(sock, None))
+            .await
+            .unwrap();
+
+        broker
+            .subscribe_client("c1", vec!["events.process.anomaly".to_owned()])
+            .await
+            .expect("public pattern must be accepted");
+    }
+
+    #[tokio::test]
+    async fn transport_client_is_refused_non_public_patterns() {
+        let broker = DaemoneyeBroker::new("/tmp/test-refuse-nonpublic.sock")
+            .await
+            .unwrap();
+        for pattern in [
+            "events.process.new",
+            "control.agent.policy",
+            "control.+.config",
+            "events.#",
+        ] {
+            let err = broker
+                .subscribe_client("any-client", vec![pattern.to_owned()])
+                .await
+                .expect_err(pattern);
+            assert!(
+                matches!(&err, EventBusError::AccessDenied { pattern: p } if p == pattern),
+                "{pattern}: {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn in_process_raw_subscriber_is_exempt_from_restriction() {
+        let broker = DaemoneyeBroker::new("/tmp/test-exempt-alert.sock")
+            .await
+            .unwrap();
+        let mut rx = broker
+            .subscribe_raw("events.#", Uuid::new_v4())
+            .await
+            .unwrap();
+        broker
+            .publish(ALERT_TOPIC, "a", b"x".to_vec())
+            .await
+            .unwrap();
+        assert!(recv_one(&mut rx).await.is_some());
     }
 }

@@ -82,6 +82,18 @@ A value carried by every evaluation and every alert saying whether the rule saw 
 
 The half-open interval of `collection_time`, `(after_ms, through_ms]`, that one detection cycle evaluates each rule against: the previous cycle's high-water mark, exclusive, to this cycle's, inclusive. Consecutive windows tile the timeline, so a row is evaluated by one cycle while `collection_time` is monotonic; a row stamped at or before the mark widens the next window down to it and the overlap is evaluated again (at least once, never zero times). The last completed cycle's mark is persisted so a restart resumes from it. A window normally sits inside one time bucket; a window spanning many buckets (a wide ad-hoc query or catch-up after an outage) is the full-retention shape, which costs far more memory and time.
 
+### Delivery row
+
+The agent's record of one alert bound for one sink, in the `alert_deliveries` table: its state (`pending`, `retrying`, `delivered`, `dead_lettered`, `suppressed_duplicate`), attempt and redrive counts, last error class, enqueue, next-attempt and terminal times, and the alert that suppressed it when it is a duplicate. It is written in the same transaction as the alert and is the source of truth for delivery; the eventbus message that announces it is fan-out only. The detection cursor never depends on it.
+
+### Dead-letter queue
+
+The delivery rows of one sink that reached `dead_lettered`: attempts exhausted, a permanent error, a misconfigured sink, a missing alert, or displacement from a full queue. It is a state of the row, not a second store. It is bounded per sink by row count, the lowest-severity oldest rows evicted first and counted, and it is redriven automatically a hundred rows at a time once a tripped breaker has stayed closed for a full cool-down, and once at agent start, up to a per-row redrive cap, counted when a row moves back to pending.
+
+### Sink breaker
+
+The per-sink circuit breaker in the delivery worker: closed, open, or half-open. Consecutive transient failures open it at the configured threshold; a misconfigured outcome (an authentication or certificate failure) opens it on one occurrence; after the cool-down it admits one probe and closes when the probe is answered (a success, or a permanent rejection). While open, no call is made to the sink and new rows wait. Local sinks have none.
+
 ### Rule generation
 
 An engine-unique number issued each time a rule is loaded, naming that load of the rule. A rule id survives a reload, so a latency report carries the generation of the instance it measured and the engine discards it if the rule has since been reloaded. Only the engine can issue one; a caller cannot construct it.

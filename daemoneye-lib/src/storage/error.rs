@@ -137,4 +137,11 @@ pub enum StorageError {
         /// Record identifier.
         id: String,
     },
+
+    /// A delivery row changed (or vanished) since the caller read it.
+    #[error("Delivery row '{key}' is stale")]
+    DeliveryStale {
+        /// Row key (sink, separator, alert id).
+        key: String,
+    },
 }

@@ -336,6 +336,7 @@ DaemonEye/
 │       ├── detection.rs    # SQL detection engine
 │       ├── models.rs       # Data structures
 │       └── storage.rs      # Database (redb)
+├── daemoneye-sinks/        # Network alert sinks (the only crate linking TLS)
 ├── collector-core/         # Collector framework
 ├── tests/                  # Integration tests
 ├── docs/solutions/         # Documented solutions to past problems (bugs, best practices, workflow patterns), by category with YAML frontmatter (module, tags, problem_type) — relevant when implementing or debugging in documented areas
@@ -474,11 +475,11 @@ pub struct Cli {
 
 ## Alert System
 
-- Trait-based plugin system (`AlertSink` trait)
-- Concurrent delivery to multiple sinks
-- Retry with exponential backoff
-- Circuit breaking for failing sinks
-- Delivery audit trail
+- Trait-based plugin system (`AlertSink` trait); local sinks in `daemoneye-lib/src/alerting/`, network sinks (`webhook`, `syslog`, `email`) in `daemoneye-sinks/`, the only crate that links the TLS stack [Implemented]
+- Stored-first delivery: alert and per-sink rows are written in one transaction to `alert_deliveries`, then one worker per sink delivers from the rows; the detection cursor never waits for delivery (ADR-0015) [Implemented]
+- Retry with exponential backoff and full jitter, a per-sink circuit breaker, a bounded dead-letter queue with batched redrive, and a severity-aware open-row cap [Implemented]
+- Delivery audit trail: every attempt's outcome is in the row; alerts are published on `events.alert.new` as a masked projection, and transport clients cannot subscribe to that topic [Implemented]
+- Credentials are referenced by environment-variable name only; an enabled sink with a missing credential refuses startup. See `docs/src/technical/alert-delivery.md`.
 
 ---
 
