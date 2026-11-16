@@ -180,7 +180,7 @@ sha2 = "0.11.0"
 # Exact-pinned: SHA-3 is a cryptographic primitive and must not change
 # silently under a caret update. See AGENTS.md "Dependency Security".
 sha3 = "=0.12.0"
-sqlparser = { version = "0.62.0", features = ["visitor"] }
+sqlparser = { version = "0.64.0", features = ["visitor"] }
 # Exact-pinned: constant-time primitive; a version bump must be reviewed, not absorbed.
 subtle = { version = "=2.6.1", default-features = false }
 
