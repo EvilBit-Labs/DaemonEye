@@ -102,7 +102,7 @@ interprocess = { version = "2.4.3", features = ["tokio"] }
 # Exact-pinned: SMTP client for the email alert sink. Default features are off so
 # native-tls (OpenSSL) never enters the graph; TLS is rustls with the `ring`
 # provider the agent installs at startup. See AGENTS.md "Dependency Security".
-lettre = { version = "=0.11.23", default-features = false, features = [
+lettre = { version = "=0.11.24", default-features = false, features = [
     "builder",
     "smtp-transport",
     "tokio1",
